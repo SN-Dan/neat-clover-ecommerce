@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_clover_link_popup_user,access.clover.link.popup.user,model_clover_link_popup,base.group_user,1,1,1,1
+access_clover_payment_link_user,access.clover.payment.link.user,model_clover_payment_link,base.group_user,1,1,1,1
+access_clover_refund_user,access.clover.refund.user,model_clover_refund,base.group_user,1,1,1,1
+access_clover_refund_popup_user,access.clover.refund.popup.user,model_clover_refund_popup,base.group_user,1,1,1,1
+payment_neatclover.access_clover_vt_popup,access_clover_vt_popup,payment_neatclover.model_clover_vt_popup,base.group_user,1,1,1,1

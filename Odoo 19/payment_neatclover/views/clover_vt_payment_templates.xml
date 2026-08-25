@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="clover_vt_invoice_payment_page" name="Clover VT Invoice Provider Select">
+        <t t-call="web.html_container">
+            <div id="neatclovervt_invoice_select_root" t-att-data-wizard-id="wizard.id"/>
+            <style>
+                body { margin: 0; font-family: Arial, sans-serif; background: #fff; }
+                .select-wrap { padding: 16px 18px 18px; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
+                .select-wrap h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; color: #212529; }
+                .notice {
+                    font-size: 13px;
+                    line-height: 1.45;
+                    color: #856404;
+                    background: #fff3cd;
+                    border: 1px solid #ffeeba;
+                    border-radius: 4px;
+                    padding: 12px 14px;
+                    margin: 0 0 18px;
+                }
+                .form-group { margin-bottom: 16px; }
+                .form-group label { display: block; font-size: 13px; font-weight: 500; color: #495057; margin-bottom: 6px; }
+                .form-group select {
+                    width: 100%;
+                    padding: 8px 12px;
+                    border: 1px solid #ced4da;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    color: #495057;
+                    background-color: #fff;
+                    box-sizing: border-box;
+                }
+                .button-row { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+                .btn {
+                    cursor: pointer;
+                    width: 100%;
+                    color: white;
+                    outline: 0;
+                    font-size: 14px;
+                    border-radius: 4px;
+                    font-weight: 500;
+                    padding: 10px 16px;
+                    border: 1px solid transparent;
+                }
+                .btn-take-payment { background: #007bff; border-color: #007bff; }
+                .btn-take-payment:disabled { opacity: 0.7; cursor: not-allowed; }
+                .btn-secondary { background: #6c757d; border-color: #6c757d; }
+                .msg { font-size: 13px; margin-top: 12px; color: #dc3545; display: none; }
+                .msg.show { display: block; }
+                .status { font-size: 13px; color: #495057; margin-top: 12px; min-height: 20px; }
+                .result-wrap { padding: 28px 8px; text-align: center; }
+                .result-title { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+                .result-title.ok { color: #198754; }
+                .result-title.err { color: #dc3545; }
+                .result-message { font-size: 14px; color: #495057; margin-bottom: 20px; }
+            </style>
+            <div class="select-wrap" id="vtSelectFormWrap">
+                <h2>Pay by Clover Virtual Terminal</h2>
+                <p class="notice">
+                    Notice: The payment page opens automatically in a popup. This virtual terminal is exclusively for authorized staff processing mail or phone transactions and should not be shared or sent directly to customers.
+                </p>
+                <div class="form-group">
+                    <label for="vtProviderSelect">Payment provider</label>
+                    <select id="vtProviderSelect" required="required">
+                        <t t-if="not vt_providers">
+                            <option value="">Choose a provider...</option>
+                        </t>
+                        <t t-foreach="vt_providers" t-as="p">
+                            <option t-att-value="p.id"
+                                    t-att-selected="('selected' if ((wizard.provider_id and p.id == wizard.provider_id.id) or (not wizard.provider_id and p_index == 0)) else None)"
+                                    t-esc="p.name"/>
+                        </t>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="vtOriginSelect">Contact Method</label>
+                    <select id="vtOriginSelect" required="required">
+                        <option value="">Choose Contact Method...</option>
+                        <option value="PHONE">Phone</option>
+                        <option value="MAIL">Mail</option>
+                    </select>
+                </div>
+                <div class="button-row">
+                    <button type="button" class="btn btn-take-payment" id="vtSelectNext">Take Payment</button>
+                </div>
+                <p class="msg" id="vtSelectMsg"></p>
+            </div>
+            <div class="select-wrap" id="vtWaitingWrap" style="display:none;">
+                <h2>Waiting for payment</h2>
+                <p class="notice">
+                    Complete the payment in the popup window. This screen updates automatically when payment finishes.
+                </p>
+                <div class="button-row">
+                    <button type="button" class="btn btn-take-payment" id="vtReopenPayment">Open Payment Popup Again</button>
+                    <button type="button" class="btn btn-secondary" id="vtBackToForm">Back</button>
+                </div>
+                <p class="status" id="vtCheckoutStatus">Waiting for payment...</p>
+            </div>
+            <div class="select-wrap" id="vtResultWrap" style="display:none;">
+                <div class="result-wrap">
+                    <div class="result-title" id="vtResultTitle"></div>
+                    <div class="result-message" id="vtResultMessage"></div>
+                </div>
+            </div>
+            <script><![CDATA[
+                document.addEventListener('DOMContentLoaded', function () {
+                    if (window.__neatclover_vt_select_initialized) {
+                        return;
+                    }
+                    window.__neatclover_vt_select_initialized = true;
+
+                    const root = document.getElementById('neatclovervt_invoice_select_root');
+                    const selectEl = document.getElementById('vtProviderSelect');
+                    const originEl = document.getElementById('vtOriginSelect');
+                    const msgEl = document.getElementById('vtSelectMsg');
+                    const nextBtn = document.getElementById('vtSelectNext');
+                    const formWrap = document.getElementById('vtSelectFormWrap');
+                    const waitingWrap = document.getElementById('vtWaitingWrap');
+                    const resultWrap = document.getElementById('vtResultWrap');
+                    const statusEl = document.getElementById('vtCheckoutStatus');
+                    const reopenBtn = document.getElementById('vtReopenPayment');
+                    const backBtn = document.getElementById('vtBackToForm');
+                    const resultTitle = document.getElementById('vtResultTitle');
+                    const resultMessage = document.getElementById('vtResultMessage');
+
+                    if (!root || !selectEl || !originEl || !msgEl || !nextBtn || !formWrap || !waitingWrap || !resultWrap) {
+                        return;
+                    }
+
+                    const wizardId = root.dataset.wizardId || '';
+                    let paymentWindow = null;
+                    let statusPollTimer = null;
+                    let finished = false;
+                    let paymentUrl = '';
+                    let transactionReference = '';
+
+                    function showMsg(text) {
+                        msgEl.textContent = text || '';
+                        msgEl.classList.toggle('show', !!text);
+                    }
+
+                    function setTakePaymentBusy(isBusy) {
+                        nextBtn.disabled = isBusy;
+                        nextBtn.dataset.processing = isBusy ? '1' : '0';
+                        nextBtn.textContent = isBusy ? 'Opening...' : 'Take Payment';
+                        selectEl.disabled = isBusy;
+                        originEl.disabled = isBusy;
+                    }
+
+                    function setWizardIframeHeight(minHeight, height) {
+                        try {
+                            var f = window.frameElement;
+                            if (!f) {
+                                return;
+                            }
+                            f.style.minHeight = minHeight;
+                            f.style.height = height;
+                            f.style.maxHeight = '';
+                            f.style.overflow = 'auto';
+                        } catch (e) {}
+                    }
+
+                    function setWizardDialogWidth(widthPx) {
+                        try {
+                            if (!window.parent || window.parent === window) {
+                                return;
+                            }
+                            var parentDoc = window.parent.document;
+                            var dialog = parentDoc.querySelector('.modal.show .modal-dialog')
+                                || parentDoc.querySelector('.o_dialog .modal-dialog')
+                                || parentDoc.querySelector('.modal-dialog');
+                            if (dialog) {
+                                dialog.style.maxWidth = widthPx;
+                                dialog.style.width = widthPx;
+                            }
+                        } catch (e) {}
+                    }
+
+                    function showForm() {
+                        finished = false;
+                        formWrap.style.display = 'block';
+                        waitingWrap.style.display = 'none';
+                        resultWrap.style.display = 'none';
+                        setWizardIframeHeight('380px', '420px');
+                        setWizardDialogWidth('462px');
+                    }
+
+                    function showWaiting() {
+                        formWrap.style.display = 'none';
+                        waitingWrap.style.display = 'block';
+                        resultWrap.style.display = 'none';
+                        statusEl.textContent = 'Waiting for payment...';
+                        setWizardIframeHeight('320px', '360px');
+                        setWizardDialogWidth('462px');
+                    }
+
+                    function closePaymentWindow() {
+                        try {
+                            if (paymentWindow && !paymentWindow.closed) {
+                                paymentWindow.close();
+                            }
+                        } catch (e) {}
+                        paymentWindow = null;
+                    }
+
+                    function stopPolling() {
+                        if (statusPollTimer) {
+                            clearInterval(statusPollTimer);
+                            statusPollTimer = null;
+                        }
+                    }
+
+                    function showResult(success, message) {
+                        finished = true;
+                        stopPolling();
+                        closePaymentWindow();
+                        formWrap.style.display = 'none';
+                        waitingWrap.style.display = 'none';
+                        resultWrap.style.display = 'block';
+                        resultTitle.textContent = success ? 'Payment successful' : 'Payment declined';
+                        resultTitle.className = 'result-title ' + (success ? 'ok' : 'err');
+                        resultMessage.textContent = message || (
+                            success
+                                ? 'The payment was processed successfully.'
+                                : 'The payment was declined. Please try again.'
+                        );
+                        setWizardIframeHeight('240px', '280px');
+                        setWizardDialogWidth('462px');
+                    }
+
+                    function openPaymentPopup() {
+                        if (!paymentUrl) {
+                            return false;
+                        }
+                        var features = 'popup=yes,width=980,height=820,scrollbars=yes,resizable=yes';
+                        paymentWindow = window.open(paymentUrl, 'neatclover_vt_checkout', features);
+                        if (!paymentWindow) {
+                            showMsg('Popup blocked. Please allow popups for this site and try again.');
+                            return false;
+                        }
+                        try { paymentWindow.focus(); } catch (e) {}
+                        return true;
+                    }
+
+                    function startStatusPolling() {
+                        stopPolling();
+                        statusPollTimer = setInterval(function () {
+                            if (finished || !transactionReference) {
+                                return;
+                            }
+                            try {
+                                if (paymentWindow && paymentWindow.closed) {
+                                    statusEl.textContent =
+                                        'Payment window closed. Waiting for confirmation, or click Open Payment Popup Again.';
+                                }
+                            } catch (e) {}
+                            fetch('/neatclovervt/payment-status?reference=' + encodeURIComponent(transactionReference), {
+                                credentials: 'same-origin',
+                            }).then(function (response) {
+                                return response.json();
+                            }).then(function (body) {
+                                if (!body || !body.ok || finished) {
+                                    return;
+                                }
+                                if (body.status === 'paid') {
+                                    showResult(true, 'Payment successful! You may now close this window.');
+                                } else if (body.status === 'error' || body.status === 'cancel') {
+                                    showResult(false, 'The payment was declined. Please try again.');
+                                }
+                            }).catch(function () {});
+                        }, 3000);
+                    }
+
+                    window.addEventListener('message', function (e) {
+                        if (finished || !e.data || e.data.type !== 'neatclover_vt_result') {
+                            return;
+                        }
+                        if (e.data.success) {
+                            showResult(true, 'Payment successful! You may now close this window.');
+                        } else {
+                            showResult(false, 'The payment was declined. Please try again.');
+                        }
+                    });
+
+                    nextBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        if (nextBtn.dataset.processing === '1') {
+                            return;
+                        }
+                        const providerId = selectEl.value;
+                        const origin = (originEl.value || '').toUpperCase();
+                        if (!providerId) {
+                            showMsg('Please select a payment provider.');
+                            return;
+                        }
+                        if (origin !== 'MAIL' && origin !== 'PHONE') {
+                            showMsg('Please select an origin (Phone or Mail).');
+                            return;
+                        }
+                        showMsg('');
+                        setTakePaymentBusy(true);
+                        fetch(`/neatclovervt/invoice_payment/${wizardId}/checkout`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                provider_id: parseInt(providerId, 10),
+                                transaction_origin: origin,
+                            }),
+                            credentials: 'same-origin',
+                        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+                        .then(function (res) {
+                            if (!res.ok || !res.body || !res.body.ok) {
+                                const err = res.body && res.body.error;
+                                showMsg(err === 'checkout_failed'
+                                    ? 'Could not start Clover checkout. Check the activation code and provider settings.'
+                                    : err === 'invalid_origin'
+                                    ? 'Please select a valid origin (Phone or Mail).'
+                                    : 'Could not start checkout. Please try again.');
+                                setTakePaymentBusy(false);
+                                return;
+                            }
+                            paymentUrl = res.body.payment_url || '';
+                            transactionReference = res.body.transaction_reference || '';
+                            if (!paymentUrl) {
+                                showMsg('Could not start checkout. Please try again.');
+                                setTakePaymentBusy(false);
+                                return;
+                            }
+                            setTakePaymentBusy(false);
+                            showWaiting();
+                            if (!openPaymentPopup()) {
+                                showForm();
+                                return;
+                            }
+                            statusEl.textContent = 'Payment popup opened. Waiting for payment confirmation...';
+                            startStatusPolling();
+                        }).catch(function () {
+                            showMsg('Network error. Please try again.');
+                            setTakePaymentBusy(false);
+                        });
+                    });
+
+                    reopenBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        if (finished) {
+                            return;
+                        }
+                        openPaymentPopup();
+                        statusEl.textContent = 'Payment popup opened. Waiting for payment confirmation...';
+                    });
+
+                    function resetToForm() {
+                        stopPolling();
+                        closePaymentWindow();
+                        paymentUrl = '';
+                        transactionReference = '';
+                        showForm();
+                    }
+
+                    backBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        resetToForm();
+                    });
+
+                    // Modal X / Close should close the payment popup the same way as Back.
+                    function cleanupOnModalDismiss() {
+                        stopPolling();
+                        closePaymentWindow();
+                        paymentUrl = '';
+                        transactionReference = '';
+                    }
+
+                    try {
+                        if (window.parent && window.parent !== window) {
+                            var parentDoc = window.parent.document;
+                            var dialog = parentDoc.querySelector('.modal.show')
+                                || parentDoc.querySelector('.o_dialog .modal')
+                                || parentDoc.querySelector('.o_dialog')
+                                || parentDoc.querySelector('.modal');
+                            if (dialog) {
+                                dialog.addEventListener('hide.bs.modal', cleanupOnModalDismiss);
+                                dialog.querySelectorAll(
+                                    '.btn-close, [data-bs-dismiss="modal"], footer button, .modal-footer button'
+                                ).forEach(function (btn) {
+                                    btn.addEventListener('click', cleanupOnModalDismiss);
+                                });
+                            }
+                        }
+                    } catch (e) {}
+
+                    window.addEventListener('pagehide', cleanupOnModalDismiss);
+                    window.addEventListener('beforeunload', cleanupOnModalDismiss);
+
+                    setWizardDialogWidth('462px');
+                    setWizardIframeHeight('380px', '420px');
+                });
+            ]]></script>
+        </t>
+    </template>
+
+    <template id="clover_vt_invoice_payment_checkout" name="clover VT Invoice Payment Checkout">
+        <t t-call="web.html_container">
+            <div id="neatclovervt_invoice_payment_root"
+                 t-att-data-wizard-id="wizard_id or ''"/>
+            <script><![CDATA[
+                document.addEventListener('DOMContentLoaded', function () {
+                    const root = document.getElementById('neatclovervt_invoice_payment_root');
+                    const wizardId = root ? (root.dataset.wizardId || '') : '';
+                    // Selection + waiting UI lives on the main VT page.
+                    if (wizardId) {
+                        window.location.replace(`/neatclovervt/invoice_payment/${wizardId}`);
+                    }
+                });
+            ]]></script>
+        </t>
+    </template>
+
+    <template id="clover_vt_result_close" name="Clover VT Result Close">
+        <t t-call="web.html_container">
+            <div style="font-family: Arial, sans-serif; text-align: center; padding: 40px 16px;">
+                <div t-if="success" style="color: #198754; font-size: 20px; font-weight: 600;">Payment successful</div>
+                <div t-elif="declined" style="color: #dc3545; font-size: 20px; font-weight: 600;">Payment declined</div>
+                <div t-else="" style="color: #495057; font-size: 20px; font-weight: 600;">Payment finished</div>
+                <p style="color: #495057; font-size: 14px;">This window will close automatically.</p>
+            </div>
+            <script><![CDATA[
+                (function () {
+                    var status = "]]><t t-esc="status"/><![CDATA[";
+                    var success = ]]><t t-esc="'true' if success else 'false'"/><![CDATA[;
+                    var payload = {
+                        type: 'neatclover_vt_result',
+                        status: status,
+                        success: success === true || success === 'true'
+                    };
+                    try {
+                        if (window.opener && !window.opener.closed) {
+                            window.opener.postMessage(payload, '*');
+                        }
+                    } catch (e) {}
+                    try { window.close(); } catch (e) {}
+                    setTimeout(function () {
+                        try { window.close(); } catch (e) {}
+                    }, 200);
+                })();
+            ]]></script>
+        </t>
+    </template>
+</odoo>

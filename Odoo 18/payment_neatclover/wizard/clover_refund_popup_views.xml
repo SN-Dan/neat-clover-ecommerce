@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="clover_refund_popup_view_form" model="ir.ui.view">
+        <field name="name">clover.refund.popup.form</field>
+        <field name="model">clover.refund.popup</field>
+        <field name="arch" type="xml">
+            <form string="Clover Refund">
+                <group>
+                    <field name="currency_id" invisible="1"/>
+                    <field name="provider_id" invisible="1"/>
+                    <field name="payment_link_id" invisible="1"/>
+                    <field name="transaction_id" invisible="1"/>
+                    <field name="sale_order_id" invisible="1"/>
+                    <field name="invoice_id" invisible="1"/>
+                    <field name="ipg_transaction_id" invisible="1"/>
+                    <field name="amount_original" readonly="1"/>
+                    <field name="amount_refunded" readonly="1"/>
+                    <field name="amount_available" readonly="1"/>
+                    <field name="amount"/>
+                </group>
+                <footer>
+                    <button string="Refund" name="action_refund" type="object" class="btn-primary"/>
+                    <button string="Cancel" special="cancel" class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>
