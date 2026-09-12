@@ -16,6 +16,7 @@
                     <field name="amount_original" readonly="1"/>
                     <field name="amount_refunded" readonly="1"/>
                     <field name="amount_available" readonly="1"/>
+                    <field name="refund_plan_info" readonly="1"/>
                     <field name="amount"/>
                 </group>
                 <footer>
