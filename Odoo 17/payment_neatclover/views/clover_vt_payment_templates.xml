@@ -79,6 +79,21 @@
                         <option value="MAIL">Mail</option>
                     </select>
                 </div>
+                <t t-if="wizard.virtual_payment_id and wizard.virtual_payment_id.is_partial">
+                    <div class="form-group">
+                        <label for="vtAmountInput">Payment Amount</label>
+                        <input id="vtAmountInput" type="number" step="0.01" min="0.01"
+                               t-att-max="wizard.virtual_payment_id.amount_total"
+                               t-att-value="wizard.virtual_payment_id.amount"
+                               t-att-data-max="wizard.virtual_payment_id.amount_total"
+                               t-att-data-currency="wizard.virtual_payment_id.currency_id.name"/>
+                        <p class="notice" style="margin-top: 8px; margin-bottom: 0;">
+                            Remaining due:
+                            <t t-esc="wizard.virtual_payment_id.amount_total"/>
+                            <t t-esc="wizard.virtual_payment_id.currency_id.name"/>
+                        </p>
+                    </div>
+                </t>
                 <div class="button-row">
                     <button type="button" class="btn btn-take-payment" id="vtSelectNext">Take Payment</button>
                 </div>
@@ -111,6 +126,7 @@
                     const root = document.getElementById('neatclovervt_invoice_select_root');
                     const selectEl = document.getElementById('vtProviderSelect');
                     const originEl = document.getElementById('vtOriginSelect');
+                    const amountEl = document.getElementById('vtAmountInput');
                     const msgEl = document.getElementById('vtSelectMsg');
                     const nextBtn = document.getElementById('vtSelectNext');
                     const formWrap = document.getElementById('vtSelectFormWrap');
@@ -144,6 +160,9 @@
                         nextBtn.textContent = isBusy ? 'Opening...' : 'Take Payment';
                         selectEl.disabled = isBusy;
                         originEl.disabled = isBusy;
+                        if (amountEl) {
+                            amountEl.disabled = isBusy;
+                        }
                     }
 
                     function setWizardIframeHeight(minHeight, height) {
@@ -296,15 +315,32 @@
                             showMsg('Please select an origin (Phone or Mail).');
                             return;
                         }
+                        let amountValue = null;
+                        if (amountEl) {
+                            amountValue = parseFloat(amountEl.value);
+                            const maxAmount = parseFloat(amountEl.dataset.max || amountEl.max || '0');
+                            if (!amountValue || amountValue <= 0) {
+                                showMsg('Payment amount must be greater than zero.');
+                                return;
+                            }
+                            if (maxAmount && amountValue > maxAmount + 0.000001) {
+                                showMsg('Payment amount cannot exceed the remaining due amount.');
+                                return;
+                            }
+                        }
                         showMsg('');
                         setTakePaymentBusy(true);
+                        const checkoutBody = {
+                            provider_id: parseInt(providerId, 10),
+                            transaction_origin: origin,
+                        };
+                        if (amountValue !== null) {
+                            checkoutBody.amount = amountValue;
+                        }
                         fetch(`/neatclovervt/invoice_payment/${wizardId}/checkout`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                provider_id: parseInt(providerId, 10),
-                                transaction_origin: origin,
-                            }),
+                            body: JSON.stringify(checkoutBody),
                             credentials: 'same-origin',
                         }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
                         .then(function (res) {
@@ -314,6 +350,8 @@
                                     ? 'Could not start Clover checkout. Check the activation code and provider settings.'
                                     : err === 'invalid_origin'
                                     ? 'Please select a valid origin (Phone or Mail).'
+                                    : err === 'invalid_amount'
+                                    ? (res.body.message || 'Please enter a valid payment amount.')
                                     : 'Could not start checkout. Please try again.');
                                 setTakePaymentBusy(false);
                                 return;

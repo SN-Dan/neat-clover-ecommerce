@@ -38,6 +38,23 @@ class AccountMove(models.Model):
             },
         }
 
+    def action_open_clover_vt_partial_popup(self):
+        wizard = self.env['clover.vt.popup'].create_partial_from_invoice(self)
+        view = self.env.ref('payment_neatclover.clover_vt_popup_view_form')
+        return {
+            'name': _('Partial Pay by Clover VT'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'clover.vt.popup',
+            'view_mode': 'form',
+            'view_id': view.id,
+            'res_id': wizard.id,
+            'target': 'new',
+            'context': {
+                **self.env.context,
+                'dialog_size': 'small',
+            },
+        }
+
     def action_open_neatclover_refund_popup(self):
         view = self.env.ref('payment_neatclover.clover_refund_popup_view_form')
         return {

@@ -77,6 +77,8 @@ class CloverVTPopup(models.TransientModel):
         if len(invoices.mapped('partner_id')) > 1:
             raise ValidationError(_('All selected invoices must belong to the same customer.'))
 
+        self.env['clover.payment.link']._assert_documents_allow_multi_payment(invoices=invoices)
+
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
             ('state', '!=', 'disabled'),
@@ -98,16 +100,21 @@ class CloverVTPopup(models.TransientModel):
         orders = orders.sudo().exists()
         if not orders:
             raise ValidationError(_('Please select at least one sales order.'))
-        not_quotation = orders.filtered(lambda o: o.state not in ('draft', 'sent'))
-        if not_quotation:
-            raise ValidationError(_(
-                'Clover payment is only available for quotations (Draft or Quotation sent).'
-            ))
-        orders = orders.filtered(lambda o: o.state in ('draft', 'sent'))
+        fully_paid = orders.filtered(
+            lambda o: o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
+            and all(
+                o.currency_id.compare_amounts(inv.amount_residual, 0) <= 0
+                for inv in o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
+            )
+        )
+        if fully_paid:
+            raise ValidationError(_('This document is already fully paid.'))
         if len(orders.mapped('partner_id')) > 1:
             raise ValidationError(_('All selected orders must belong to the same customer.'))
         if len(orders.mapped('currency_id')) > 1:
             raise ValidationError(_('All selected orders must use the same currency.'))
+
+        self.env['clover.payment.link']._assert_documents_allow_multi_payment(sale_orders=orders)
 
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
@@ -121,6 +128,69 @@ class CloverVTPopup(models.TransientModel):
             'status': 'draft',
             'sale_order_ids': [(6, 0, orders.ids)],
         })
+        virtual_payment._create_sale_orders_payment_transaction()
         wizard = self._create_vt_wizard_from_virtual_payment(virtual_payment, provider)
         virtual_payment.sudo().write({'neatclover_vt_wizard_id': wizard.id})
+        return wizard
+
+    @api.model
+    def create_partial_from_invoice(self, invoice):
+        invoice = invoice.sudo().exists()
+        if len(invoice) != 1:
+            raise ValidationError(_('Please select exactly one posted customer invoice.'))
+        invoice = invoice.filtered(lambda m: m.is_invoice(include_receipts=False) and m.state == 'posted')
+        if not invoice:
+            raise ValidationError(_('Please select exactly one posted customer invoice.'))
+        if invoice.payment_state == 'paid':
+            raise ValidationError(_('This invoice is already paid.'))
+
+        provider = self.env['payment.provider'].sudo().search([
+            ('code', '=', 'neatclover'),
+            ('state', '!=', 'disabled'),
+        ], limit=1)
+        if not provider:
+            raise ValidationError(_('Clover virtual terminal provider is not configured.'))
+
+        remaining = invoice.amount_residual
+        if invoice.currency_id.compare_amounts(remaining, 0) <= 0:
+            raise ValidationError(_('There is no remaining amount to pay on this invoice.'))
+
+        virtual_payment = self.env['clover.payment.link'].sudo().create({
+            'provider_id': provider.id,
+            'status': 'draft',
+            'is_partial': True,
+            'partial_amount': remaining,
+            'invoice_ids': [(6, 0, invoice.ids)],
+        })
+        wizard = self._create_vt_wizard_from_virtual_payment(virtual_payment, provider)
+        virtual_payment.sudo().write({'neatclover_vt_wizard_id': wizard.id})
+        return wizard
+
+    @api.model
+    def create_partial_from_order(self, order):
+        order = order.sudo().exists()
+        if len(order) != 1:
+            raise ValidationError(_('Please select exactly one sales order.'))
+        provider = self.env['payment.provider'].sudo().search([
+            ('code', '=', 'neatclover'),
+            ('state', '!=', 'disabled'),
+        ], limit=1)
+        if not provider:
+            raise ValidationError(_('Clover virtual terminal provider is not configured.'))
+
+        Link = self.env['clover.payment.link'].sudo()
+        remaining = Link._get_sale_order_remaining_amount(order)
+        if order.currency_id.compare_amounts(remaining, 0) <= 0:
+            raise ValidationError(_('There is no remaining amount to pay on this sales order.'))
+
+        virtual_payment = Link.create({
+            'provider_id': provider.id,
+            'status': 'draft',
+            'is_partial': True,
+            'partial_amount': remaining,
+            'sale_order_ids': [(6, 0, order.ids)],
+        })
+        # payment.transaction is created at checkout once the amount is confirmed
+        wizard = self._create_vt_wizard_from_virtual_payment(virtual_payment, provider)
+        virtual_payment.write({'neatclover_vt_wizard_id': wizard.id})
         return wizard

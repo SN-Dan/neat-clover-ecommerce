@@ -34,10 +34,6 @@
         "views/clover_vt_payment_templates.xml"
     ],
     "assets": {
-        "web.assets_backend": [
-            "payment_neatclover/static/src/js/neatclover.js",
-            "payment_neatclover/static/src/css/neatclover.css",
-        ],
         "web.assets_frontend": [
             "payment_neatclover/static/src/js/payment_form.js",
             "payment_neatclover/static/src/js/neatclover.js",

@@ -64,9 +64,13 @@ class PaymentTransaction(models.Model):
         """Override of payment to extract the amount and currency from the payment data."""
         if self.provider_code != 'neatclover':
             return super()._extract_amount_data(payment_data)
+        approved = (payment_data or {}).get('approvedAmount') or {}
+        if not approved.get('total') or not approved.get('currency'):
+            # e.g. WAITING/3DS webhook — skip amount check; final webhook has approvedAmount.
+            return None
         return {
-            'amount': payment_data['approvedAmount']['total'],
-            'currency_code': payment_data['approvedAmount']['currency'],
+            'amount': approved['total'],
+            'currency_code': approved['currency'],
             'precision_digits': self.currency_id.decimal_places,
         }
 

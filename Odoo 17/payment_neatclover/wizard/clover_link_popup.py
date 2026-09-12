@@ -43,16 +43,20 @@ class CloverLinkPopup(models.TransientModel):
             orders = self.env['sale.order'].sudo().browse(active_ids).exists()
             if not orders:
                 raise ValidationError('Please select at least one sales order.')
-            not_quotation = orders.filtered(lambda o: o.state not in ('draft', 'sent'))
-            if not_quotation:
-                raise ValidationError(
-                    'Clover payment is only available for quotations (Draft or Quotation sent).'
+            fully_paid = orders.filtered(
+                lambda o: o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
+                and all(
+                    o.currency_id.compare_amounts(inv.amount_residual, 0) <= 0
+                    for inv in o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
                 )
-            orders = orders.filtered(lambda o: o.state in ('draft', 'sent'))
+            )
+            if fully_paid:
+                raise ValidationError('This document is already fully paid.')
             if len(orders.mapped('partner_id')) > 1:
                 raise ValidationError('All selected orders must belong to the same customer.')
             if len(orders.mapped('currency_id')) > 1:
                 raise ValidationError('All selected orders must use the same currency.')
+            self.env['clover.payment.link']._assert_documents_allow_multi_payment(sale_orders=orders)
             link_vals['sale_order_ids'] = [(6, 0, orders.ids)]
         else:
             invoices = self.env['account.move'].sudo().browse(active_ids).exists()
@@ -65,6 +69,7 @@ class CloverLinkPopup(models.TransientModel):
                 raise ValidationError('All selected invoices must have the same currency.')
             if len(invoices.mapped('partner_id')) > 1:
                 raise ValidationError('All selected invoices must belong to the same customer.')
+            self.env['clover.payment.link']._assert_documents_allow_multi_payment(invoices=invoices)
             link_vals['invoice_ids'] = [(6, 0, invoices.ids)]
 
         provider = provider or self.env['payment.provider'].sudo().search([
@@ -76,6 +81,8 @@ class CloverLinkPopup(models.TransientModel):
 
         link_vals['provider_id'] = provider.id
         link_rec = self.env['clover.payment.link'].sudo().create(link_vals)
+        if link_rec.sale_order_ids:
+            link_rec._create_sale_orders_payment_transaction()
         payload = self._build_link_payload(link_rec)
         # base_url = provider.neatclover_connection_url.rstrip('/')
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url').rstrip('/')

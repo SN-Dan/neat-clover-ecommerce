@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import _, models
+from odoo.exceptions import ValidationError
 
 
 class SaleOrder(models.Model):
@@ -26,6 +27,27 @@ class SaleOrder(models.Model):
         view = self.env.ref('payment_neatclover.clover_vt_popup_view_form')
         return {
             'name': _('Pay by Clover Virtual Terminal'),
+            'type': 'ir.actions.act_window',
+            'res_model': 'clover.vt.popup',
+            'view_mode': 'form',
+            'view_id': view.id,
+            'res_id': wizard.id,
+            'target': 'new',
+            'context': {
+                **self.env.context,
+                'dialog_size': 'small',
+            },
+        }
+
+    def action_open_clover_vt_partial_popup(self):
+        self.ensure_one()
+        remaining = self.env['clover.payment.link']._get_sale_order_remaining_amount(self)
+        if self.currency_id.compare_amounts(remaining, 0) <= 0:
+            raise ValidationError(_('This document is already fully paid.'))
+        wizard = self.env['clover.vt.popup'].create_partial_from_order(self)
+        view = self.env.ref('payment_neatclover.clover_vt_popup_view_form')
+        return {
+            'name': _('Partial Pay by Clover VT'),
             'type': 'ir.actions.act_window',
             'res_model': 'clover.vt.popup',
             'view_mode': 'form',
