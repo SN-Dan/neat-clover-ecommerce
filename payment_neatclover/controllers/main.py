@@ -3,6 +3,8 @@ import json
 import hashlib
 import hmac
 import logging
+import time
+from urllib.parse import quote
 from odoo.http import request
 from odoo import _, http, fields
 from odoo.exceptions import ValidationError
@@ -36,15 +38,17 @@ class NeatCloverController(http.Controller):
 
         if result_state in ('pending', 'error'):
             link_rec.sudo().write({'status': result_state})
+            if link_rec.sale_order_ids and result_state == 'error':
+                link_rec._cancel_sale_orders_payment_transaction()
 
         if link_rec.sale_order_ids:
             orders = link_rec.sale_order_ids.filtered(lambda o: o.state in ('draft', 'sent'))
             order_names = ', '.join(link_rec.sale_order_ids.mapped('name'))
             if result_state == 'done' and orders:
-                self._confirm_sale_orders(orders)
+                link_rec._complete_sale_orders_payment_transaction()
                 note_body = (
                     f"Payment was made for reference {reference}. "
-                    f"Multiple sales orders were paid together. "
+                    f"{'Partial payment applied.' if link_rec.is_partial else 'Multiple sales orders were paid together.'} "
                     f"Sales orders in this payment link: {order_names}"
                 )
                 admin_user = request.env.ref('base.user_admin')
@@ -56,27 +60,18 @@ class NeatCloverController(http.Controller):
                     )
                 link_rec.sudo().write({'status': 'paid'})
             elif result_state == 'done':
+                link_rec._complete_sale_orders_payment_transaction()
                 link_rec.sudo().write({'status': 'paid'})
             return True
 
         invoices = link_rec.invoice_ids.filtered(lambda m: m.state == 'posted' and m.payment_state != 'paid')
         invoice_names = ', '.join(link_rec.invoice_ids.mapped('name'))
         if result_state == 'done' and invoices:
-            wizard_ctx = {
-                'active_model': 'account.move',
-                'active_ids': invoices.ids,
-                'active_id': invoices.ids[0]
-            }
-            register_wizard_vals = {}
-            if link_rec.provider_id.journal_id:
-                register_wizard_vals['journal_id'] = link_rec.provider_id.journal_id.id
-            register_wizard_vals['group_payment'] = True
-            register_wizard = request.env['account.payment.register'].sudo().with_context(**wizard_ctx).create(register_wizard_vals)
-            payments = register_wizard._create_payments()
+            link_rec._complete_sale_orders_payment_transaction()
 
             note_body = (
                 f"Payment was made for reference {reference}. "
-                f"Multiple invoices were paid together. "
+                f"{'Partial payment applied.' if link_rec.is_partial else 'Multiple invoices were paid together.'} "
                 f"Invoices in this payment link: {invoice_names}"
             )
             admin_user = request.env.ref('base.user_admin')
@@ -123,7 +118,10 @@ class NeatCloverController(http.Controller):
                 ('virtual_payment_id', '=', link_rec.id),
             ], limit=1)
         if link_rec.neatclover_vt_wizard_id or vt_wizard:
-            redirect_url = f"/neatclovervt/result?status={status or ''}"
+            redirect_url = (
+                f"/neatclovervt/result?status={quote(status or '')}"
+                f"&reference={quote(link_rec.reference or '', safe='')}"
+            )
             _logger.info("clover_result response redirect=%s status=%s", redirect_url, status)
             return request.redirect(redirect_url)
 
@@ -142,6 +140,7 @@ class NeatCloverController(http.Controller):
                     raise ValidationError(
                         "NeatClover Multi Payment Link: " + _("No transaction found matching reference %s.", pt_clover)
                     )
+                
                 status = None
                 if link_rec.provider_id.code == 'neatclover' and link_rec.status == 'draft':
                     tx = link_rec
@@ -160,7 +159,6 @@ class NeatCloverController(http.Controller):
                                         'env': request.env, 'fields': fields, "request_type": 'take_payment_response', 'checkout_endpoint': tx.neatclover_checkout_id}
                         exec(exec_code, {}, local_context)
                         response = local_context.get("response") or {}
-
                         _logger.info("clover_result fiserv response for %s: %s", pt_clover, response)
                         status = response.get('transactionStatus')
                         link_rec.write({#'provider_reference': response.get('ipgTransactionDetails', {}).get('processor', {}).get('referenceNumber', False),
@@ -176,6 +174,7 @@ class NeatCloverController(http.Controller):
                         elif status in RESPONSE_CODES_MAPPING["error"]:
                             result_state = 'error'
                         self._handle_guid_link_invoices(pt_clover, result_state)
+
                 return self._neatclover_link_result_redirect(link_rec, status)
 
             tx = request.env["payment.transaction"].sudo().search([('neatclover_payment_identifier', '=', pt_clover)], limit=1)
@@ -200,7 +199,6 @@ class NeatCloverController(http.Controller):
                                     'env': request.env, 'fields': fields, "request_type": 'take_payment_response', 'checkout_endpoint': tx.neatclover_checkout_id}
                     exec(exec_code, {}, local_context)
                     response = local_context.get("response") or {}
-
                     tx._process('neatclover', response)
             landing_route = '/payment/status'
             _logger.info("clover_result response redirect=%s", landing_route)
@@ -226,15 +224,17 @@ class NeatCloverController(http.Controller):
 
     def _get_link_processing_values(self, link_rec, payload_provider_id=None, kwargs={}):
         link_rec = link_rec.sudo()
-        if kwargs and kwargs.get('status'):
-            if kwargs.get('status') in ['FAILED', 'FRAUD']:
-                return {'error': ''}
-            elif kwargs.get('status') in ['DECLINED']:
-                return {'error': ''}
+        return_status = (kwargs or {}).get('status')
+        failed_return = return_status in ('FAILED', 'FRAUD', 'DECLINED', 'VALIDATION_FAILED')
 
         if link_rec.sale_order_ids:
-            if not link_rec.sale_order_ids.filtered(lambda o: o.state in ('draft', 'sent')):
-                return {'error': 'No quotations available for payment.'}
+            def _so_fully_paid(o):
+                invoices = o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
+                return bool(invoices) and all(
+                    o.currency_id.compare_amounts(inv.amount_residual, 0) <= 0 for inv in invoices
+                )
+            if all(_so_fully_paid(o) for o in link_rec.sale_order_ids):
+                return {'error': 'Sales orders are already fully paid.'}
         else:
             invoices = link_rec.invoice_ids.filtered(lambda m: m.state == 'posted' and m.payment_state != 'paid')
             if not invoices:
@@ -253,9 +253,44 @@ class NeatCloverController(http.Controller):
         processing_values = link_rec.neatclover_get_processing_values(
             provider=provider,
             result_action=NeatCloverController.result_action,
+            force_new=failed_return or link_rec.status == 'error',
         )
+        if failed_return:
+            processing_values['error'] = processing_values.get('error') or ''
         _logger.info("_get_link_processing_values response for %s: %s", link_rec.reference, processing_values)
         return processing_values
+
+    def _wait_payment_link_final_status(self, link_rec, timeout_seconds=30):
+        """Poll DB until paid/error/cancel or timeout. Returns status string from SQL."""
+        if not link_rec:
+            return None
+        link_id = link_rec.id
+        _logger.info(
+            '_wait_payment_link_final_status waiting link_id=%s reference=%s',
+            link_id, link_rec.reference,
+        )
+        db_status = None
+        for attempt in range(timeout_seconds):
+            request.env.cr.execute(
+                'SELECT status FROM clover_payment_link WHERE id = %s',
+                (link_id,),
+            )
+            row = request.env.cr.fetchone()
+            db_status = row[0] if row else None
+            _logger.info(
+                '_wait_payment_link_final_status poll attempt=%s link_id=%s row=%s db_status=%s',
+                attempt + 1, link_id, row, db_status,
+            )
+            # Commit so the next SELECT is outside a long idle txn and sees webhook commits.
+            request.env.cr.commit()
+            if db_status in ('paid', 'error', 'cancel'):
+                return db_status
+            time.sleep(1)
+        _logger.info(
+            '_wait_payment_link_final_status timeout link_id=%s link_status=%s',
+            link_id, db_status,
+        )
+        return db_status
 
     @http.route('/neatclover/payment_link/<string:payload>', type='http', auth='public', website=True, csrf=False)
     def payment_link_page(self, payload, **kwargs):
@@ -270,6 +305,20 @@ class NeatCloverController(http.Controller):
             _logger.info("payment_link_page response: not_found")
             return request.not_found()
 
+        status_param = kwargs.get('status') or ''
+        waited_status = None
+        _logger.info(
+            "payment_link_page status_param=%s reference=%s link_status=%s",
+            status_param, link_rec.reference, link_rec.status,
+        )
+        if status_param in ('WAITING', 'pending', 'PARTIAL'):
+            _logger.info("payment_link_page WAITING start reference=%s", link_rec.reference)
+            waited_status = self._wait_payment_link_final_status(link_rec)
+            _logger.info(
+                "payment_link_page WAITING done reference=%s waited_status=%s",
+                link_rec.reference, waited_status,
+            )
+
         sale_orders = link_rec.sale_order_ids
         order_pay_lines = []
         if sale_orders:
@@ -283,19 +332,36 @@ class NeatCloverController(http.Controller):
                     'portal_url': portal_url or ('/web#id=%s&model=sale.order&view_type=form' % order.id),
                 })
             amount_total = sum(order['amount'] for order in order_pay_lines)
-            link_is_paid = all(o.state not in ('draft', 'sent') for o in sale_orders)
+            def _so_fully_paid(o):
+                invoices = o.invoice_ids.filtered(lambda m: m.state == 'posted' and m.move_type == 'out_invoice')
+                return bool(invoices) and all(
+                    o.currency_id.compare_amounts(inv.amount_residual, 0) <= 0 for inv in invoices
+                )
+            link_is_paid = bool(sale_orders) and all(_so_fully_paid(o) for o in sale_orders)
             invoices = request.env['account.move']  
         else:
             invoices = link_rec.invoice_ids.filtered(lambda m: m.state == 'posted')
             amount_total = sum(invoices.mapped('amount_total'))
             currency_symbol = invoices[:1].currency_id.symbol if invoices else ''
             link_is_paid = bool(invoices) and all(inv.payment_state == 'paid' for inv in invoices)
+        if waited_status == 'paid':
+            link_is_paid = True
         if link_is_paid and link_rec.status != 'paid':
             link_rec.sudo().write({'status': 'paid'})
         
         processing_values = self._get_link_processing_values(
             link_rec, payload_provider_id=data.get('provider_id'), kwargs=kwargs,
         ) if not link_is_paid else {}
+
+        if waited_status == 'paid':
+            display_status = 'APPROVED'
+            display_link_status = 'paid'
+        elif waited_status is not None:
+            display_status = 'failure'
+            display_link_status = 'error'
+        else:
+            display_status = kwargs.get('status')
+            display_link_status = link_rec.status
 
         values = {
             'invoices': invoices,
@@ -306,15 +372,16 @@ class NeatCloverController(http.Controller):
             'payload': payload,
             'reference': link_rec.reference,
             'link_is_paid': link_is_paid,
-            'status': kwargs.get('status'),
-            'link_status': link_rec.status,
+            'status': display_status,
+            'link_status': display_link_status,
             'payment_url': processing_values.get('payment_url'),
             'neatclover_use_iframe': processing_values.get('neatclover_use_iframe'),
             'payment_error': processing_values.get('error'),
         }
         _logger.info(
-            "payment_link_page response reference=%s link_is_paid=%s payment_url=%s payment_error=%s",
-            link_rec.reference, link_is_paid, processing_values.get('payment_url'), processing_values.get('error'),
+            "payment_link_page response reference=%s link_is_paid=%s link_status=%s status=%s payment_url=%s payment_error=%s",
+            link_rec.reference, link_is_paid, display_link_status, display_status,
+            processing_values.get('payment_url'), processing_values.get('error'),
         )
         return request.render('payment_neatclover.clover_payment_link_page', values)
 
@@ -371,6 +438,17 @@ class NeatCloverController(http.Controller):
         order_id = response.get('orderId')
         checkout_id = response.get('checkoutId')
         status = response.get('transactionStatus')
+
+        # WAITING (e.g. 3DS) has no approvedAmount; ack and wait for a final webhook.
+        if status == 'WAITING':
+            response_body = {
+                'error': 'OK',
+                'message': 'Ignored WAITING',
+                'reference': order_id,
+                'transaction_status': status,
+            }
+            _logger.info("neatclover_wh response: %s", response_body)
+            return request.make_json_response(response_body, status=200)
 
         result_state = 'error'
         if status in RESPONSE_CODES_MAPPING['done']:
@@ -605,7 +683,28 @@ class NeatCloverController(http.Controller):
             _logger.info("neatclovervt_invoice_payment_checkout response: %s", response_body)
             return request.make_json_response(response_body, status=400)
 
-        wizard.virtual_payment_id.sudo().write({'provider_id': provider.id})
+        link_rec = wizard.virtual_payment_id.sudo()
+        link_rec.write({'provider_id': provider.id})
+
+        if link_rec.is_partial:
+            try:
+                amount = float(payload.get('amount'))
+            except (TypeError, ValueError):
+                response_body = {'ok': False, 'error': 'invalid_amount'}
+                _logger.info("neatclovervt_invoice_payment_checkout response: %s", response_body)
+                return request.make_json_response(response_body, status=400)
+            try:
+                prepared_amount = link_rec._prepare_partial_amount(amount)
+            except ValidationError as exc:
+                response_body = {'ok': False, 'error': 'invalid_amount', 'message': exc.args[0] if exc.args else str(exc)}
+                _logger.info("neatclovervt_invoice_payment_checkout response: %s", response_body)
+                return request.make_json_response(response_body, status=400)
+            if link_rec.sale_order_ids:
+                tx = link_rec._get_sale_orders_payment_transaction()
+                if tx and tx.state == 'draft':
+                    tx.write({'amount': prepared_amount})
+                else:
+                    link_rec._create_sale_orders_payment_transaction()
 
         reuse_existing = (
             wizard.checkout_id
@@ -613,6 +712,7 @@ class NeatCloverController(http.Controller):
             and wizard.payment_url
             and wizard.provider_id == provider
             and wizard.transaction_origin == transaction_origin
+            and not link_rec.is_partial
         )
         if reuse_existing:
             processing_values = {
@@ -622,7 +722,7 @@ class NeatCloverController(http.Controller):
                 'payment_url': wizard.payment_url,
             }
         else:
-            processing_values = wizard.virtual_payment_id.neatclover_get_processing_values(
+            processing_values = link_rec.neatclover_get_processing_values(
                 provider=provider,
                 result_action=self.result_action,
                 transaction_origin=transaction_origin,
@@ -703,12 +803,24 @@ class NeatCloverController(http.Controller):
         })
 
     @http.route('/neatclovervt/result', type='http', auth='public', website=True, csrf=False)
-    def neatclovervt_result_close(self, status=None, **kwargs):
-        success = (status or '') in ('APPROVED', 'done', 'paid')
-        declined = (status or '') in ('FAILED', 'FRAUD', 'DECLINED', 'error', 'VALIDATION_FAILED')
-        _logger.info("neatclovervt_result_close status=%s success=%s", status, success)
+    def neatclovervt_result_close(self, status=None, reference=None, **kwargs):
+        status = status or ''
+        # WAITING: poll backend until paid/error (webhook may finish after redirect).
+        if status in ('WAITING', 'pending', 'PARTIAL'):
+            link = request.env['clover.payment.link']
+            if reference:
+                link = link.sudo().search([('reference', '=', reference)], limit=1)
+            waited_status = self._wait_payment_link_final_status(link) if link else None
+            status = 'APPROVED' if waited_status == 'paid' else 'FAILED'
+
+        success = status in ('APPROVED', 'done', 'paid')
+        declined = status in ('FAILED', 'FRAUD', 'DECLINED', 'error', 'VALIDATION_FAILED')
+        _logger.info(
+            "neatclovervt_result_close status=%s success=%s reference=%s",
+            status, success, reference,
+        )
         return request.render('payment_neatclover.clover_vt_result_close', {
-            'status': status or '',
+            'status': status,
             'success': success,
             'declined': declined,
         })

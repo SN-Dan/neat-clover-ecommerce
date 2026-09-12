@@ -7,6 +7,8 @@
         <field name="arch" type="xml">
             <group name="provider_credentials" position='inside'>
                 <group invisible="code != 'neatclover'">
+                    <script type="text/javascript" src="/payment_neatclover/static/src/js/neatclover.js"/>
+                    <link rel="stylesheet" href="/payment_neatclover/static/src/css/neatclover.css"/>
                     <div class="alert alert-success" role="alert" colspan="2" invisible="neatclover_activation_code">
                         Don't have an Activation Code yet?<br />
                           
