@@ -1,12 +1,114 @@
-.neatclover-popup { display: none; position: fixed; top: 20%; left: 50%; transform: translate(-50%, -20%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0px 4px 10px rgba(0,0,0,0.2); width: 320px; text-align: center; }
+.neatclover-popup {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+    width: 640px;
+    max-width: 92vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    text-align: center;
+    z-index: 1050;
+}
 
-.neatclover-popup input { width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; }
+.neatclover-popup input,
+.neatclover-popup select {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
 
-.neatclover-popup .neatclover_close_form { margin: 10px; padding: 10px; background-color: #d9534f; color: white; border: none; border-radius: 4px; cursor: pointer; }
+.neatclover-popup .neatclover_close_form {
+    margin: 10px;
+    padding: 10px;
+    background-color: #d9534f;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+    text-decoration: none;
+}
 
-.neatclover-popup .neatclover_submit { margin: 10px; padding: 10px; background-color: #017e84; color: white; border: none; border-radius: 4px; cursor: pointer; }
+.neatclover-popup .neatclover_submit {
+    margin: 10px;
+    padding: 10px;
+    background-color: #017e84;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+    text-decoration: none;
+}
 
-#neatclover_request_form { margin-bottom: 20px; }
+#neatclover_request_form {
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.neatclover-mode-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.neatclover-mode-tab {
+    flex: 1;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: #cfd4d8;
+    color: #333;
+    font-weight: 600;
+    text-decoration: none;
+    text-align: center;
+    display: inline-block;
+    box-sizing: border-box;
+}
+
+.neatclover-mode-tab.active {
+    background: #017e84;
+    color: #fff;
+}
+
+.neatclover-field {
+    margin-bottom: 10px;
+}
+
+.neatclover-field label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.neatclover-terms-notice {
+    font-size: 13px;
+    color: #444;
+    margin: 12px 0 4px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.neatclover-terms-notice a {
+    color: #017e84;
+    text-decoration: underline;
+}
+
+.neatclover-client-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
 
 .neatclover-terms-popup {
     width: 640px;
