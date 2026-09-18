@@ -7,25 +7,15 @@
         <field name="arch" type="xml">
             <group name="provider_credentials" position='inside'>
                 <group invisible="code != 'neatclover'">
-                    <script type="text/javascript" src="/payment_neatclover/static/src/js/neatclover.js"/>
-                    <link rel="stylesheet" href="/payment_neatclover/static/src/css/neatclover.css"/>
-                    <div class="alert alert-success" role="alert" colspan="2" invisible="neatclover_activation_code">
+<div class="alert alert-success" role="alert" colspan="2" invisible="neatclover_activation_code">
                         Don't have an Activation Code yet?<br />
                           
-                        <a href="#" name="activation-code-button" onclick="showActivationForm(event)">
-                        Get a free activation code
-                        </a>
                         
-                        <div id="neatclover_form" class="neatclover-popup">
-                            <h3>Request an Activation Code</h3>
-                            <div id="neatclover_request_form">
-
-                            </div>
-                            <a href="#" class="neatclover_submit" name="neatclover_submit">Submit</a>
-                            <a href="#" class="neatclover_close_form" name="neatclover_close_form">Cancel</a>
-                        </div>
-                    </div> 
-                    <field
+                    <a href="https://api.sns-software.com/license-request?provider=clover" target="_blank" rel="noopener noreferrer">
+                        Get a free activation code
+                    </a>
+                </div>
+                <field
                         name="neatclover_reset_code"
                         string="Update Module Cache"
                         required="code == 'neatclover' and state != 'disabled'"
@@ -68,18 +58,12 @@
                     />
                     <div class="alert alert-success" role="alert" colspan="2">
                         <b>By using this module you agree to our </b>
-                        <a href="#" onclick="showTermsPopup(event)">
+                        
+                    <a href="https://api.sns-software.com/terms?provider=clover" target="_blank" rel="noopener noreferrer">
                         terms and conditions
-                        </a>
-                        <div id="neatclover_terms_popup" class="neatclover-popup neatclover-terms-popup">
-                            <h3>Terms and Conditions</h3>
-                            <div id="neatclover_terms_content" class="neatclover-terms-content">
-                                Loading...
-                            </div>
-                            <a href="#" class="neatclover_close_terms" name="neatclover_close_terms">Close</a>
-                        </div>
-                    </div>
-                   <!-- <div class="oe_structure" colspan="2">
+                    </a>
+                </div>
+                    <!-- <div class="oe_structure" colspan="2">
                         <p>
                             Please make sure to set the following webhook in the Clover Dashboard:
                         </p>
