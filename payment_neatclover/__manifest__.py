@@ -36,8 +36,6 @@
     "assets": {
         "web.assets_frontend": [
             "payment_neatclover/static/src/js/payment_form.js",
-            "payment_neatclover/static/src/js/neatclover.js",
-            "payment_neatclover/static/src/css/neatclover.css",
         ],
     },
     "installable": True,
