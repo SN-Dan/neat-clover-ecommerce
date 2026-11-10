@@ -23,14 +23,20 @@ class NeatCloverController(http.Controller):
         if (reference or '').startswith('pl/'):
             return True
 
-    def _resolve_neatclover_guid(self, pt_clover):
-        """Resolve a payment link or transaction from the same GUID used on /neatclover/result."""
-        if not pt_clover:
+    def _resolve_neatclover_webhook_token(self, wh_token):
+        """Resolve a payment link or transaction from the server-only webhook token.
+
+        This must be different from pt_clover on the browser redirect URL.
+        """
+        if not wh_token:
             return request.env['clover.payment.link']
-        if self._is_guid_reference(pt_clover):
-            return request.env['clover.payment.link'].sudo().search([('reference', '=', pt_clover)], limit=1)
+        link_rec = request.env['clover.payment.link'].sudo().search(
+            [('neatclover_webhook_token', '=', wh_token)], limit=1
+        )
+        if link_rec:
+            return link_rec
         return request.env['payment.transaction'].sudo().search(
-            [('neatclover_payment_identifier', '=', pt_clover)], limit=1
+            [('neatclover_webhook_token', '=', wh_token)], limit=1
         )
 
     def _neatclover_wh_unauthorized(self, message, **extra):
@@ -447,15 +453,15 @@ class NeatCloverController(http.Controller):
     @http.route(
         "/neatclover/wh", type="http", auth="public", csrf=False, methods=["POST", "GET"]
     )
-    def neatclover_wh(self, pt_clover=None, **kwargs):
-        # Same GUID gate as /neatclover/result — reject callers without a valid pt_clover.
-        pt_clover = pt_clover or kwargs.get('pt_clover')
-        guid_rec = self._resolve_neatclover_guid(pt_clover)
+    def neatclover_wh(self, wh_token=None, **kwargs):
+        # Server-only token — must not reuse browser-visible pt_clover from the result URL.
+        wh_token = wh_token or kwargs.get('wh_token')
+        guid_rec = self._resolve_neatclover_webhook_token(wh_token)
         if not guid_rec or guid_rec.provider_id.code != 'neatclover':
-            return self._neatclover_wh_unauthorized('Missing or invalid pt_clover')
+            return self._neatclover_wh_unauthorized('Missing or invalid wh_token')
 
         raw_body = request.httprequest.get_data(as_text=True)
-        _logger.info("neatclover_wh request body=%s pt_clover=%s kwargs=%s", raw_body, pt_clover, kwargs)
+        _logger.info("neatclover_wh request body=%s kwargs=%s", raw_body, kwargs)
         response = json.loads(raw_body)
         _logger.info("neatclover_wh parsed response=%s", response)
         checkout_id = response.get('checkoutId')
@@ -463,7 +469,7 @@ class NeatCloverController(http.Controller):
 
         if checkout_id and guid_rec.neatclover_checkout_id and checkout_id != guid_rec.neatclover_checkout_id:
             return self._neatclover_wh_unauthorized(
-                'pt_clover does not match checkout',
+                'wh_token does not match checkout',
                 reference=guid_rec.reference,
             )
 

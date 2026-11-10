@@ -2,6 +2,7 @@
 import base64
 import logging
 import re
+import secrets
 import requests
 import uuid
 from decimal import Decimal
@@ -47,6 +48,11 @@ class CloverPaymentLink(models.Model):
     neatclover_payment_url = fields.Char(copy=False)
     neatclover_ipg_transaction_id = fields.Char()
     neatclover_payment_identifier = fields.Char(copy=False)
+    neatclover_webhook_token = fields.Char(
+        copy=False,
+        index=True,
+        help='Server-only token embedded in the Fiserv webHooksUrl; distinct from browser pt_clover.',
+    )
     neatclover_vt_wizard_id = fields.Integer(copy=False)
     neatclover_failure_activity_scheduled = fields.Boolean(
         string='Failure Activity Scheduled',
@@ -151,6 +157,7 @@ class CloverPaymentLink(models.Model):
             'neatclover_checkout_id': False,
             'neatclover_payment_url': False,
             'neatclover_payment_identifier': False,
+            'neatclover_webhook_token': False,
         })
         return amount
 
@@ -177,6 +184,7 @@ class CloverPaymentLink(models.Model):
             and self.neatclover_checkout_id
             and self.neatclover_payment_url
             and self.neatclover_payment_identifier
+            and self.neatclover_webhook_token
         ):
             checkout_sdk_url = provider.neatclover_resolve_checkout_sdk_url(self.neatclover_payment_url)
             return {
@@ -198,6 +206,7 @@ class CloverPaymentLink(models.Model):
                 provider.write({"neatclover_cached_code": exec_code})
 
         if exec_code:
+            webhook_token = secrets.token_urlsafe(32)
             local_context = {
                 "tr": self,
                 "processing_values": {
@@ -213,6 +222,7 @@ class CloverPaymentLink(models.Model):
                 "urls": urls,
                 "neat_clover_controller_result_action": result_action,
                 "neat_clover_controller_webhook_action": NeatCloverController.webhook_action,
+                "neat_clover_webhook_token": webhook_token,
                 "env": self.env,
                 "fields": fields,
                 "is_multi_payment_link": True,
@@ -228,6 +238,7 @@ class CloverPaymentLink(models.Model):
                 'neatclover_payment_identifier': local_context.get('random_number'),
                 'neatclover_checkout_id': response.get("checkout", {}).get('checkoutId'),
                 'neatclover_payment_url': checkout_url,
+                'neatclover_webhook_token': webhook_token,
             })
 
             checkout_id = response.get('checkout', {}).get('checkoutId') or self.neatclover_checkout_id
