@@ -4,6 +4,7 @@
 # Odoo is a trademark of Odoo S.A.
 
 import logging
+import secrets
 from odoo import _, fields, models
 from odoo.addons.payment_neatclover.controllers.main import NeatCloverController
 
@@ -18,6 +19,11 @@ class PaymentTransaction(models.Model):
     neatclover_checkout_id = fields.Char()
     neatclover_ipg_transaction_id = fields.Char()
     neatclover_payment_identifier = fields.Char(copy=False)
+    neatclover_webhook_token = fields.Char(
+        copy=False,
+        index=True,
+        help='Server-only token embedded in the Fiserv webHooksUrl; distinct from browser pt_clover.',
+    )
     neatclover_failure_activity_scheduled = fields.Boolean(
         string='Failure Activity Scheduled',
         default=False,
@@ -43,14 +49,18 @@ class PaymentTransaction(models.Model):
                 self.provider_id.write({"neatclover_cached_code": exec_code})
 
         if exec_code:
+            webhook_token = secrets.token_urlsafe(32)
             local_context = {"tr": self, "processing_values": processing_values, 
                             "neat_clover_controller_result_action": NeatCloverController.result_action,
+                            "neat_clover_controller_webhook_action": NeatCloverController.webhook_action,
+                            "neat_clover_webhook_token": webhook_token,
                             'env': self.env, 'fields': fields, "is_multi_payment_link": False, 'request_type': 'take_payment_request'}
             exec(exec_code, {}, local_context)
             response = local_context.get("response")
             checkout_url = response.get('checkout', {}).get('redirectionUrl')
             self.write({'neatclover_payment_identifier': local_context.get('random_number'),
-                        'neatclover_checkout_id': response.get("checkout", {}).get('checkoutId')})
+                        'neatclover_checkout_id': response.get("checkout", {}).get('checkoutId'),
+                        'neatclover_webhook_token': webhook_token})
             return {
                 "payment_url": checkout_url,
                 "transactionNotificationURL": local_context.get("odoo_redirect_url"),
