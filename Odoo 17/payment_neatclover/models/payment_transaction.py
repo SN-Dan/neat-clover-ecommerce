@@ -45,6 +45,7 @@ class PaymentTransaction(models.Model):
         if exec_code:
             local_context = {"tr": self, "processing_values": processing_values, 
                             "neat_clover_controller_result_action": NeatCloverController.result_action,
+                            "neat_clover_controller_webhook_action": NeatCloverController.webhook_action,
                             'env': self.env, 'fields': fields, "is_multi_payment_link": False, 'request_type': 'take_payment_request'}
             exec(exec_code, {}, local_context)
             response = local_context.get("response")

@@ -9,6 +9,7 @@ from decimal import Decimal
 from werkzeug import urls
 
 from odoo import api, fields, models
+from odoo.addons.payment_neatclover.controllers.main import NeatCloverController
 
 _logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ class CloverPaymentLink(models.Model):
                 "re": re,
                 "urls": urls,
                 "neat_clover_controller_result_action": result_action,
+                "neat_clover_controller_webhook_action": NeatCloverController.webhook_action,
                 "env": self.env,
                 "fields": fields,
                 "is_multi_payment_link": True,

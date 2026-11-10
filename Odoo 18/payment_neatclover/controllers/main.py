@@ -17,10 +17,26 @@ from odoo.addons.payment_neatclover.const import RESPONSE_CODES_MAPPING
 class NeatCloverController(http.Controller):
 
     result_action = "/neatclover/result"
+    webhook_action = "/neatclover/wh"
 
     def _is_guid_reference(self, reference):
         if (reference or '').startswith('pl/'):
             return True
+
+    def _resolve_neatclover_guid(self, pt_clover):
+        """Resolve a payment link or transaction from the same GUID used on /neatclover/result."""
+        if not pt_clover:
+            return request.env['clover.payment.link']
+        if self._is_guid_reference(pt_clover):
+            return request.env['clover.payment.link'].sudo().search([('reference', '=', pt_clover)], limit=1)
+        return request.env['payment.transaction'].sudo().search(
+            [('neatclover_payment_identifier', '=', pt_clover)], limit=1
+        )
+
+    def _neatclover_wh_unauthorized(self, message, **extra):
+        response_body = {'error': 'Unauthorized', 'message': message, **extra}
+        _logger.info("neatclover_wh response: %s", response_body)
+        return request.make_json_response(response_body, status=401)
 
     def _handle_guid_link_invoices(self, reference, result_state):
         link_rec = request.env['clover.payment.link'].sudo().search([('reference', '=', reference)], limit=1)
@@ -431,21 +447,32 @@ class NeatCloverController(http.Controller):
     @http.route(
         "/neatclover/wh", type="http", auth="public", csrf=False, methods=["POST", "GET"]
     )
-    def neatclover_wh(self, **kwargs):
+    def neatclover_wh(self, pt_clover=None, **kwargs):
+        # Same GUID gate as /neatclover/result — reject callers without a valid pt_clover.
+        pt_clover = pt_clover or kwargs.get('pt_clover')
+        guid_rec = self._resolve_neatclover_guid(pt_clover)
+        if not guid_rec or guid_rec.provider_id.code != 'neatclover':
+            return self._neatclover_wh_unauthorized('Missing or invalid pt_clover')
+
         raw_body = request.httprequest.get_data(as_text=True)
-        _logger.info("neatclover_wh request body=%s kwargs=%s", raw_body, kwargs)
+        _logger.info("neatclover_wh request body=%s pt_clover=%s kwargs=%s", raw_body, pt_clover, kwargs)
         response = json.loads(raw_body)
         _logger.info("neatclover_wh parsed response=%s", response)
-        order_id = response.get('orderId')
         checkout_id = response.get('checkoutId')
         status = response.get('transactionStatus')
+
+        if checkout_id and guid_rec.neatclover_checkout_id and checkout_id != guid_rec.neatclover_checkout_id:
+            return self._neatclover_wh_unauthorized(
+                'pt_clover does not match checkout',
+                reference=guid_rec.reference,
+            )
 
         # WAITING (e.g. 3DS) has no approvedAmount; ack and wait for a final webhook.
         if status == 'WAITING':
             response_body = {
                 'error': 'OK',
                 'message': 'Ignored WAITING',
-                'reference': order_id,
+                'reference': guid_rec.reference,
                 'transaction_status': status,
             }
             _logger.info("neatclover_wh response: %s", response_body)
@@ -462,95 +489,9 @@ class NeatCloverController(http.Controller):
             result_state = 'error'
         incoming_failed = result_state == 'error'
 
-        if order_id and checkout_id:
-            link_rec = request.env['clover.payment.link'].sudo().search([
-                ('neatclover_checkout_id', '=', checkout_id),
-                '|',
-                ('reference', '=', order_id),
-                ('sale_order_ids.name', '=', order_id),
-            ], limit=1)
-            if link_rec and link_rec.provider_id.code == 'neatclover':
-                # Late failure only: previously paid, then a later error webhook.
-                if link_rec.status == 'paid' and incoming_failed:
-                    self._neatclover_schedule_failure_activity(link_rec)
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'OK',
-                        'reference': link_rec.reference,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-                if link_rec.status == 'error' and incoming_failed:
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'Already processed',
-                        'reference': link_rec.reference,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-                if link_rec.status not in ['paid', 'error']:
-                    link_rec.write({
-                        'neatclover_ipg_transaction_id': response.get('ipgTransactionDetails', {}).get('ipgTransactionId', False),
-                    })
-                    self._handle_guid_link_invoices(link_rec.reference, result_state)
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'OK',
-                        'result_state': result_state,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-
-            tx = request.env['payment.transaction'].sudo().search([
-                ('reference', '=', order_id),
-                ('neatclover_checkout_id', '=', checkout_id),
-            ], limit=1)
-            if tx and tx.provider_id.code == 'neatclover':
-                # Late failure only: previously done, then a later error webhook.
-                if tx.state == 'done' and incoming_failed:
-                    self._neatclover_schedule_failure_activity(tx)
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'OK',
-                        'reference': tx.reference,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-                if tx.state == 'error' and incoming_failed:
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'Already processed',
-                        'reference': tx.reference,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-                if tx.state not in ['done', 'error']:
-                    tx._handle_notification_data('neatclover', response)
-                    response_body = {
-                        'error': 'OK',
-                        'message': 'OK',
-                        'reference': order_id,
-                        'transaction_status': status,
-                    }
-                    _logger.info("neatclover_wh response: %s", response_body)
-                    return request.make_json_response(response_body, status=200)
-
-        link_rec = request.env['clover.payment.link'].sudo().search([
-            '|',
-            ('reference', '=', order_id),
-            ('sale_order_ids.name', '=', order_id),
-        ], limit=1)
-        if not link_rec:
-            link_rec = request.env['payment.transaction'].sudo().search([
-                ('reference', '=', order_id),
-            ], limit=1)
-
-        if link_rec and link_rec._name == 'clover.payment.link' and link_rec.provider_id.code == 'neatclover':
+        if guid_rec._name == 'clover.payment.link':
+            link_rec = guid_rec
+            # Late failure only: previously paid, then a later error webhook.
             if link_rec.status == 'paid' and incoming_failed:
                 self._neatclover_schedule_failure_activity(link_rec)
                 response_body = {
@@ -561,7 +502,16 @@ class NeatCloverController(http.Controller):
                 }
                 _logger.info("neatclover_wh response: %s", response_body)
                 return request.make_json_response(response_body, status=200)
-            if link_rec.status not in ['paid', 'error'] and incoming_failed:
+            if link_rec.status == 'error' and incoming_failed:
+                response_body = {
+                    'error': 'OK',
+                    'message': 'Already processed',
+                    'reference': link_rec.reference,
+                    'transaction_status': status,
+                }
+                _logger.info("neatclover_wh response: %s", response_body)
+                return request.make_json_response(response_body, status=200)
+            if link_rec.status not in ['paid', 'error']:
                 link_rec.write({
                     'neatclover_ipg_transaction_id': response.get('ipgTransactionDetails', {}).get('ipgTransactionId', False),
                 })
@@ -569,39 +519,7 @@ class NeatCloverController(http.Controller):
                 response_body = {
                     'error': 'OK',
                     'message': 'OK',
-                    'reference': link_rec.reference,
                     'result_state': result_state,
-                    'transaction_status': status,
-                }
-                _logger.info("neatclover_wh response: %s", response_body)
-                return request.make_json_response(response_body, status=200)
-
-        if link_rec:
-            is_paid = (
-                link_rec.status == 'paid'
-                if link_rec._name == 'clover.payment.link'
-                else link_rec.state == 'done'
-            )
-            if is_paid and incoming_failed:
-                self._neatclover_schedule_failure_activity(link_rec)
-                response_body = {
-                    'error': 'OK',
-                    'message': 'OK',
-                    'reference': link_rec.reference,
-                    'transaction_status': status,
-                }
-                _logger.info("neatclover_wh response: %s", response_body)
-                return request.make_json_response(response_body, status=200)
-            is_failed = (
-                link_rec.status == 'error'
-                if link_rec._name == 'clover.payment.link'
-                else link_rec.state == 'error'
-            )
-            if is_failed and incoming_failed:
-                response_body = {
-                    'error': 'OK',
-                    'message': 'Already processed',
-                    'reference': link_rec.reference,
                     'transaction_status': status,
                 }
                 _logger.info("neatclover_wh response: %s", response_body)
@@ -615,9 +533,46 @@ class NeatCloverController(http.Controller):
             _logger.info("neatclover_wh response: %s", response_body)
             return request.make_json_response(response_body, status=200)
 
-        response_body = {'error': 'Bad Request', 'message': 'Bad Request', 'order_id': order_id}
+        tx = guid_rec
+        # Late failure only: previously done, then a later error webhook.
+        if tx.state == 'done' and incoming_failed:
+            self._neatclover_schedule_failure_activity(tx)
+            response_body = {
+                'error': 'OK',
+                'message': 'OK',
+                'reference': tx.reference,
+                'transaction_status': status,
+            }
+            _logger.info("neatclover_wh response: %s", response_body)
+            return request.make_json_response(response_body, status=200)
+        if tx.state == 'error' and incoming_failed:
+            response_body = {
+                'error': 'OK',
+                'message': 'Already processed',
+                'reference': tx.reference,
+                'transaction_status': status,
+            }
+            _logger.info("neatclover_wh response: %s", response_body)
+            return request.make_json_response(response_body, status=200)
+        if tx.state not in ['done', 'error']:
+            tx._handle_notification_data('neatclover', response)
+            response_body = {
+                'error': 'OK',
+                'message': 'OK',
+                'reference': tx.reference,
+                'transaction_status': status,
+            }
+            _logger.info("neatclover_wh response: %s", response_body)
+            return request.make_json_response(response_body, status=200)
+
+        response_body = {
+            'error': 'OK',
+            'message': 'OK',
+            'reference': tx.reference,
+            'transaction_status': status,
+        }
         _logger.info("neatclover_wh response: %s", response_body)
-        return request.make_json_response(response_body, status=400)
+        return request.make_json_response(response_body, status=200)
 
     @http.route('/neatclovervt/invoice_payment/<int:wizard_id>', type='http', auth='user', website=True)
     def neatclovervt_invoice_payment_page(self, wizard_id, **kwargs):
