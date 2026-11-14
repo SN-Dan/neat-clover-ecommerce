@@ -476,13 +476,7 @@ class CloverRefundPopup(models.TransientModel):
         if self.provider_id.neatclover_store_id:
             payload['storeId'] = self.provider_id.neatclover_store_id
 
-        exec_code = self.provider_id.neatclover_cached_code
-        if self.provider_id.neatclover_cached_code:
-            exec_code = self.provider_id.neatclover_cached_code
-        elif self.provider_id.neatclover_activation_code:
-            exec_code = self.provider_id.neatclover_get_code(self.provider_id.neatclover_activation_code)
-            if exec_code:
-                self.provider_id.write({"neatclover_cached_code": exec_code})
+        exec_code = self.provider_id.neatclover_get_exec_code()
 
         response = {}
         if exec_code:
@@ -585,13 +579,7 @@ class CloverRefundPopup(models.TransientModel):
         if not ipg_transaction_id:
             raise ValidationError(_('Missing Clover transaction id for refund.'))
 
-        exec_code = self.provider_id.neatclover_cached_code
-        if self.provider_id.neatclover_cached_code:
-            exec_code = self.provider_id.neatclover_cached_code
-        elif self.provider_id.neatclover_activation_code:
-            exec_code = self.provider_id.neatclover_get_code(self.provider_id.neatclover_activation_code)
-            if exec_code:
-                self.provider_id.write({"neatclover_cached_code": exec_code})
+        exec_code = self.provider_id.neatclover_get_exec_code()
 
         if exec_code:
             local_context = {
