@@ -22,6 +22,35 @@ class NeatCloverController(http.Controller):
         if (reference or '').startswith('pl/'):
             return True
 
+    def _neatclover_requeue_finalise(self, record):
+        """Ensure finalise pending after paid/done (recovers race rollbacks)."""
+        try:
+            if not record:
+                return
+            Finalise = request.env['neatclover.finalise.payment'].sudo()
+            if record._name == 'clover.payment.link':
+                amount = record.partial_amount if getattr(record, 'is_partial', False) else record.amount
+                device = (
+                    'virtual terminal'
+                    if getattr(record, 'neatclover_vt_wizard_id', False)
+                    else 'ecommerce'
+                )
+                Finalise.mark_pending(
+                    record.reference, record.provider_id, amount, record.currency_id, device,
+                )
+            elif record._name == 'payment.transaction' and record.provider_code == 'neatclover':
+                Finalise.mark_pending(
+                    record.reference,
+                    record.provider_id,
+                    record.amount,
+                    record.currency_id,
+                    record._neatclover_device_type_for_finalise(),
+                )
+        except Exception:
+            _logger.exception(
+                'NeatClover requeue finalise failed ref=%s', getattr(record, 'reference', None)
+            )
+
     def _handle_guid_link_invoices(self, reference, result_state):
         link_rec = request.env['clover.payment.link'].sudo().search([('reference', '=', reference)], limit=1)
         if not link_rec:
@@ -32,6 +61,8 @@ class NeatCloverController(http.Controller):
         if link_rec.status == 'paid' and result_state == 'error':
             return True
         if link_rec.status == target_status:
+            if result_state == 'done':
+                self._neatclover_requeue_finalise(link_rec)
             return True
         if link_rec.status == 'paid' and target_status in ('pending', 'error'):
             return True
@@ -131,8 +162,34 @@ class NeatCloverController(http.Controller):
         return request.redirect(redirect_url)
 
     @http.route(result_action, type='http', methods=['GET', 'POST'], auth='public', csrf=False, save_session=False)
-    def clover_result(self, pt_clover=None, **payload):
-        _logger.info("clover_result request pt_clover=%s payload=%s", pt_clover, payload)
+    def clover_result(self, p=None, pt_clover=None, **payload):
+        # Identifier only from sealed ?p= token — ignore any client-supplied pt_clover.
+        _logger.info(
+            "clover_result request p=%s pt_clover_ignored=%s payload=%s",
+            bool(p), bool(pt_clover), payload,
+        )
+        if not p:
+            _logger.info("clover_result missing sealed token p=")
+            return request.redirect('/payment/status')
+        Token = request.env['neatclover.url.token'].sudo()
+        try:
+            claims = Token.open(p, expected_purpose='redirect')
+        except ValidationError:
+            return request.redirect('/payment/status')
+        pt_clover = claims['reference']
+        link_rec = request.env['clover.payment.link'].sudo().search([('reference', '=', pt_clover)], limit=1)
+        tx = request.env['payment.transaction'].sudo().search(
+            [('neatclover_payment_identifier', '=', pt_clover)], limit=1
+        )
+        record = link_rec or tx
+        if not record:
+            return request.redirect('/payment/status')
+        amount = (
+            (record.partial_amount if record.is_partial else record.amount)
+            if record._name == 'clover.payment.link' else record.amount
+        )
+        if not Token.record_amount_matches(claims, amount, record.currency_id):
+            return request.redirect('/payment/status')
         if pt_clover:
             if self._is_guid_reference(pt_clover):
                 link_rec = request.env['clover.payment.link'].sudo().search([('reference', '=', pt_clover)], limit=1)
@@ -144,13 +201,7 @@ class NeatCloverController(http.Controller):
                 status = None
                 if link_rec.provider_id.code == 'neatclover' and link_rec.status == 'draft':
                     tx = link_rec
-                    exec_code = tx.provider_id.neatclover_cached_code
-                    if tx.provider_id.neatclover_cached_code:
-                        exec_code = tx.provider_id.neatclover_cached_code
-                    elif tx.provider_id.neatclover_activation_code:
-                        exec_code = tx.provider_id.neatclover_get_code(tx.provider_id.neatclover_activation_code)
-                        if exec_code:
-                            tx.provider_id.write({"neatclover_cached_code": exec_code})
+                    exec_code = tx.provider_id.neatclover_get_exec_code()
 
                     if exec_code:
                         local_context = {"tr": tx, "processing_values": {}, 
@@ -184,13 +235,7 @@ class NeatCloverController(http.Controller):
                 )
             elif tx and tx.provider_id.code == 'neatclover' and tx.state == 'draft':
 
-                exec_code = tx.provider_id.neatclover_cached_code
-                if tx.provider_id.neatclover_cached_code:
-                    exec_code = tx.provider_id.neatclover_cached_code
-                elif tx.provider_id.neatclover_activation_code:
-                    exec_code = tx.provider_id.neatclover_get_code(tx.provider_id.neatclover_activation_code)
-                    if exec_code:
-                        tx.provider_id.write({"neatclover_cached_code": exec_code})
+                exec_code = tx.provider_id.neatclover_get_exec_code()
 
                 if exec_code:
                     local_context = {"tr": tx, "processing_values": {}, 
@@ -199,6 +244,7 @@ class NeatCloverController(http.Controller):
                                     'env': request.env, 'fields': fields, "request_type": 'take_payment_response', 'checkout_endpoint': tx.neatclover_checkout_id}
                     exec(exec_code, {}, local_context)
                     response = local_context.get("response") or {}
+
                     tx._process('neatclover', response)
             landing_route = '/payment/status'
             _logger.info("clover_result response redirect=%s", landing_route)
@@ -430,7 +476,47 @@ class NeatCloverController(http.Controller):
     @http.route(
         "/neatclover/wh", type="http", auth="public", csrf=False, methods=["POST", "GET"]
     )
-    def neatclover_wh(self, **kwargs):
+    def neatclover_wh_unauthenticated(self, **kwargs):
+        return request.make_json_response(
+            {'error': 'Forbidden', 'message': 'Webhook token required'}, status=403
+        )
+
+    @http.route(
+        "/neatclover/wh/<string:token>",
+        type="http",
+        auth="public",
+        csrf=False,
+        methods=["POST", "GET"],
+    )
+    def neatclover_wh(self, token, **kwargs):
+        Token = request.env['neatclover.url.token'].sudo()
+        try:
+            claims = Token.open(token, expected_purpose='webhook')
+        except ValidationError as err:
+            return request.make_json_response({'error': 'Forbidden', 'message': str(err)}, status=403)
+
+        sealed_ref = claims['reference']
+        link_for_token = request.env['clover.payment.link'].sudo().search(
+            [('reference', '=', sealed_ref)], limit=1
+        )
+        tx_for_token = request.env['payment.transaction'].sudo().search(
+            [('neatclover_payment_identifier', '=', sealed_ref)], limit=1
+        )
+        sealed_record = link_for_token or tx_for_token
+        if not sealed_record:
+            return request.make_json_response(
+                {'error': 'Bad Request', 'message': 'Unknown reference', 'reference': sealed_ref},
+                status=400,
+            )
+        sealed_amount = (
+            (sealed_record.partial_amount if sealed_record.is_partial else sealed_record.amount)
+            if sealed_record._name == 'clover.payment.link' else sealed_record.amount
+        )
+        if not Token.record_amount_matches(claims, sealed_amount, sealed_record.currency_id):
+            return request.make_json_response(
+                {'error': 'Forbidden', 'message': 'Amount mismatch'}, status=403
+            )
+
         raw_body = request.httprequest.get_data(as_text=True)
         _logger.info("neatclover_wh request body=%s kwargs=%s", raw_body, kwargs)
         response = json.loads(raw_body)
@@ -502,6 +588,16 @@ class NeatCloverController(http.Controller):
                     }
                     _logger.info("neatclover_wh response: %s", response_body)
                     return request.make_json_response(response_body, status=200)
+                if link_rec.status == 'paid' and result_state == 'done':
+                    self._neatclover_requeue_finalise(link_rec)
+                    response_body = {
+                        'error': 'OK',
+                        'message': 'OK',
+                        'reference': link_rec.reference,
+                        'transaction_status': status,
+                    }
+                    _logger.info("neatclover_wh response: %s", response_body)
+                    return request.make_json_response(response_body, status=200)
 
             tx = request.env['payment.transaction'].sudo().search([
                 ('reference', '=', order_id),
@@ -534,6 +630,16 @@ class NeatCloverController(http.Controller):
                         'error': 'OK',
                         'message': 'OK',
                         'reference': order_id,
+                        'transaction_status': status,
+                    }
+                    _logger.info("neatclover_wh response: %s", response_body)
+                    return request.make_json_response(response_body, status=200)
+                if tx.state == 'done' and result_state == 'done':
+                    self._neatclover_requeue_finalise(tx)
+                    response_body = {
+                        'error': 'OK',
+                        'message': 'OK',
+                        'reference': tx.reference,
                         'transaction_status': status,
                     }
                     _logger.info("neatclover_wh response: %s", response_body)
@@ -605,6 +711,8 @@ class NeatCloverController(http.Controller):
                 }
                 _logger.info("neatclover_wh response: %s", response_body)
                 return request.make_json_response(response_body, status=200)
+            if is_paid and result_state == 'done':
+                self._neatclover_requeue_finalise(link_rec)
             response_body = {
                 'error': 'OK',
                 'message': 'OK',

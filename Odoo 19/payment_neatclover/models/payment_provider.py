@@ -4,6 +4,8 @@
 # Odoo is a trademark of Odoo S.A.
 
 import logging
+from datetime import timedelta
+
 import requests
 from odoo.addons.payment_neatclover import const
 from odoo import _, api, fields, models
@@ -31,6 +33,11 @@ class PaymentProvider(models.Model):
         string="Activation Code", help="Contact us to receive a free activation code.")
     neatclover_cached_code = fields.Char(
         string="Cached Code", help="Cached Code")
+    neatclover_cached_code_checked_at = fields.Datetime(
+        string="Cached Code Last Check",
+        help="When the license cache was last successfully refreshed or checked.",
+        copy=False,
+    )
     neatclover_use_iframe = fields.Boolean(string="Use iFrame", help="iFrame allows you to process the payment on your Odoo web page instead of being redirected to a Clover website. It provides a more seamless user experience.", default=False)
     neatclover_reset_code = fields.Boolean(string="Update Module Cache", help="If set to true it will update the module cache", default=False)
     
@@ -79,6 +86,59 @@ class PaymentProvider(models.Model):
         
         return None
 
+
+    def neatclover_get_exec_code(self):
+        """Return cached license exec code, with at-most-once-per-24h OTA refresh.
+
+        Runs entirely in the current request thread (Odoo.sh-safe).
+        If a cache already exists it is used for this request even when a refresh
+        is attempted. The cache is updated only on a successful API response.
+        """
+        self.ensure_one()
+        cached = self.neatclover_cached_code
+        now = fields.Datetime.now()
+        checked_at = self.neatclover_cached_code_checked_at
+        is_stale = not checked_at or checked_at < now - timedelta(hours=24)
+        activation = self.neatclover_activation_code
+
+        if cached and not is_stale:
+            return cached
+
+        if not activation:
+            return cached or None
+
+        new_code = None
+        try:
+            new_code = self.neatclover_get_code(activation)
+        except ValidationError:
+            if not cached:
+                raise
+            _logger.warning(
+                "%s OTA cache refresh skipped due to validation error; using existing cache.",
+                "neatclover",
+            )
+        except Exception:
+            if not cached:
+                raise
+            _logger.exception(
+                "%s OTA cache refresh failed; using existing cache.",
+                "neatclover",
+            )
+
+        if new_code:
+            self.write({
+                "neatclover_cached_code": new_code,
+                "neatclover_cached_code_checked_at": now,
+            })
+            return new_code
+
+        if cached:
+            # Failed refresh: keep cache, stamp check time so we retry in 24h.
+            self.write({"neatclover_cached_code_checked_at": now})
+            return cached
+        return None
+
+
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
@@ -93,6 +153,7 @@ class PaymentProvider(models.Model):
                     _logger.info(f"Code: {code != None}")
                     if code:
                         vals['neatclover_cached_code'] = code
+                        vals['neatclover_cached_code_checked_at'] = fields.Datetime.now()
                     else:
                         _logger.info(f"Raised error for code")
                         raise ValidationError(_("The activation code is invalid. Please check and try again."))
@@ -103,6 +164,7 @@ class PaymentProvider(models.Model):
                 _logger.info(f"Code: {code}")
                 if code:
                     vals['neatclover_cached_code'] = code
+                    vals['neatclover_cached_code_checked_at'] = fields.Datetime.now()
                 else:
                     _logger.info(f"Raised error for code")
                     raise ValidationError(_("The activation code is invalid. Please check and try again."))
@@ -120,6 +182,7 @@ class PaymentProvider(models.Model):
                 _logger.info(f"Code: {code}")
                 if code:
                     vals['neatclover_cached_code'] = code
+                    vals['neatclover_cached_code_checked_at'] = fields.Datetime.now()
                 else:
                     _logger.info(f"Raised error for code")
                     raise ValidationError(_("The activation code is invalid. Please check and try again."))
@@ -130,6 +193,7 @@ class PaymentProvider(models.Model):
             _logger.info(f"Code: {code}")
             if code:
                 vals['neatclover_cached_code'] = code
+                vals['neatclover_cached_code_checked_at'] = fields.Datetime.now()
             else:
                 _logger.info(f"Raised error for code")
                 raise ValidationError(_("The activation code is invalid. Please check and try again."))

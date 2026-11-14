@@ -67,7 +67,7 @@
                         <p>
                             Please make sure to set the following webhook in the Clover Dashboard:
                         </p>
-                        <p><strong>{Odoo Server URL}/neatclover/wh</strong></p>
+                        <p><strong>{Odoo Server URL}/neatclover/wh/&lt;sealed-token&gt;</strong> (set automatically per checkout)</p>
                     </div> -->
                 </group>
             </group>

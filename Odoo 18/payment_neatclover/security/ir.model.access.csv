@@ -4,3 +4,4 @@ access_clover_payment_link_user,access.clover.payment.link.user,model_clover_pay
 access_clover_refund_user,access.clover.refund.user,model_clover_refund,base.group_user,1,1,1,1
 access_clover_refund_popup_user,access.clover.refund.popup.user,model_clover_refund_popup,base.group_user,1,1,1,1
 payment_neatclover.access_clover_vt_popup,access_clover_vt_popup,payment_neatclover.model_clover_vt_popup,base.group_user,1,1,1,1
+access_neatclover_finalise_payment_user,access.neatclover.finalise.payment.user,payment_neatclover.model_neatclover_finalise_payment,base.group_user,1,1,1,1
