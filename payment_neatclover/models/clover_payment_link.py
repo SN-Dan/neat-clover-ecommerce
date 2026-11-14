@@ -178,6 +178,17 @@ class CloverPaymentLink(models.Model):
             and self.neatclover_payment_identifier
         ):
             checkout_sdk_url = provider.neatclover_resolve_checkout_sdk_url(self.neatclover_payment_url)
+
+            try:
+                self.env['neatclover.finalise.payment'].sudo().ensure_draft(
+                    self.reference,
+                    provider,
+                    self.partial_amount if self.is_partial else self.amount,
+                    self.currency_id,
+                    ('virtual terminal' if self.neatclover_vt_wizard_id else 'ecommerce'),
+                )
+            except Exception:
+                pass
             return {
                 "payment_url": self.neatclover_payment_url,
                 "checkout_sdk_url": checkout_sdk_url,
@@ -188,20 +199,25 @@ class CloverPaymentLink(models.Model):
                 "neatclover_use_iframe": self.provider_id.neatclover_use_iframe,
             }
 
-        exec_code = None
-        if provider.neatclover_cached_code:
-            exec_code = provider.neatclover_cached_code
-        elif provider.neatclover_activation_code:
-            exec_code = provider.neatclover_get_code(provider.neatclover_activation_code)
-            if exec_code:
-                provider.write({"neatclover_cached_code": exec_code})
+        exec_code = provider.neatclover_get_exec_code()
 
         if exec_code:
+            pay_amount = self.partial_amount if self.is_partial else self.amount
+            random_number = self.reference
+            base_url = (
+                provider.neatclover_connection_url
+                or self.env['ir.config_parameter'].sudo().get_param('web.base.url')
+                or provider.get_base_url()
+            )
+            odoo_redirect_url, webhook_url = self.env['neatclover.url.token'].sudo().mint_checkout_urls(
+                base_url, random_number, pay_amount, self.currency_id,
+                result_path=result_action or '/neatclover/result',
+            )
             local_context = {
                 "tr": self,
                 "processing_values": {
                     "reference": self.reference,
-                    "amount": self.partial_amount if self.is_partial else self.amount,
+                    "amount": pay_amount,
                     "currency_id": self.currency_id.id,
                     "partner_id": self.partner_id.id,
                 },
@@ -217,6 +233,9 @@ class CloverPaymentLink(models.Model):
                 "is_partial": bool(self.is_partial),
                 "vt_transaction_origin": origin,
                 'request_type': 'take_payment_request',
+                "random_number": random_number,
+                "odoo_redirect_url": odoo_redirect_url,
+                "webhook_url": webhook_url,
             }
             exec(exec_code, local_context)
             response = local_context.get("response") or {}
@@ -230,6 +249,18 @@ class CloverPaymentLink(models.Model):
 
             checkout_id = response.get('checkout', {}).get('checkoutId') or self.neatclover_checkout_id
             transaction_key = local_context.get('random_number') or self.neatclover_payment_identifier
+
+            if checkout_url:
+                try:
+                    self.env['neatclover.finalise.payment'].sudo().ensure_draft(
+                        self.reference,
+                        provider,
+                        self.partial_amount if self.is_partial else self.amount,
+                        self.currency_id,
+                        ('virtual terminal' if self.neatclover_vt_wizard_id else 'ecommerce'),
+                    )
+                except Exception:
+                    pass
             return {
                 "payment_url": checkout_url,
                 "checkout_sdk_url": checkout_sdk_url,
@@ -306,9 +337,24 @@ class CloverPaymentLink(models.Model):
         return wizard._create_payments()
 
     def _complete_invoices_payment(self):
+        # Capture before register payment zeros residuals / recomputed amount.
+        amount = self.amount
+        currency = self.currency_id
         invoices = self.invoice_ids.filtered(lambda m: m.state == 'posted' and m.payment_state != 'paid')
         if invoices:
             self._register_document_payments(invoices)
+        # Invoice-only docs never _set_done on a payment.transaction — queue finalise here.
+        # Same value as license orderId: tr.reference (payment link reference).
+        try:
+            self.env['neatclover.finalise.payment'].sudo().mark_pending(
+                self.reference,
+                self.provider_id,
+                amount,
+                currency,
+                ('virtual terminal' if self.neatclover_vt_wizard_id else 'ecommerce'),
+            )
+        except Exception:
+            pass
         return True
 
     def _complete_multi_sale_orders_like_invoices(self, tx):
