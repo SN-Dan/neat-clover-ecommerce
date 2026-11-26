@@ -206,7 +206,7 @@ class CloverPaymentLink(models.Model):
             random_number = self.reference
             base_url = (
                 provider.neatclover_connection_url
-                or self.env['ir.config_parameter'].sudo().get_param('web.base.url')
+                or self.env['ir.config_parameter'].sudo().get_str('web.base.url')
                 or provider.get_base_url()
             )
             odoo_redirect_url, webhook_url = self.env['neatclover.url.token'].sudo().mint_checkout_urls(
@@ -359,6 +359,7 @@ class CloverPaymentLink(models.Model):
 
     def _complete_multi_sale_orders_like_invoices(self, tx):
         """Confirm/invoice SOs if needed, then register onto unpaid invoices (same as invoice flow)."""
+        tx = tx.with_context(payment_safe_write=True)
         for order in self.sale_order_ids.filtered(lambda o: o.state in ('draft', 'sent')):
             order.with_context(send_email=True).action_confirm()
 
@@ -395,7 +396,7 @@ class CloverPaymentLink(models.Model):
             if not tx:
                 return False
             if tx.state != 'done':
-                tx._set_done()
+                tx.with_context(payment_safe_write=True)._set_done()
             if tx.is_post_processed:
                 return True
             # Finalize disabled — always use register payment flow.
@@ -410,5 +411,5 @@ class CloverPaymentLink(models.Model):
         tx = self._get_sale_orders_payment_transaction()
         if not tx or tx.state in ('done', 'cancel'):
             return False
-        tx._set_canceled()
+        tx.with_context(payment_safe_write=True)._set_canceled()
         return True

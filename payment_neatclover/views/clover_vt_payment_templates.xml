@@ -67,7 +67,7 @@
                         <t t-foreach="vt_providers" t-as="p">
                             <option t-att-value="p.id"
                                     t-att-selected="('selected' if ((wizard.provider_id and p.id == wizard.provider_id.id) or (not wizard.provider_id and p_index == 0)) else None)"
-                                    t-esc="p.name"/>
+                                    t-out="p.name"/>
                         </t>
                     </select>
                 </div>
@@ -89,8 +89,8 @@
                                t-att-data-currency="wizard.virtual_payment_id.currency_id.name"/>
                         <p class="notice" style="margin-top: 8px; margin-bottom: 0;">
                             Remaining due:
-                            <t t-esc="wizard.virtual_payment_id.amount_total"/>
-                            <t t-esc="wizard.virtual_payment_id.currency_id.name"/>
+                            <t t-out="wizard.virtual_payment_id.amount_total"/>
+                            <t t-out="wizard.virtual_payment_id.currency_id.name"/>
                         </p>
                     </div>
                 </t>
@@ -462,8 +462,8 @@
             </div>
             <script><![CDATA[
                 (function () {
-                    var status = "]]><t t-esc="status"/><![CDATA[";
-                    var success = ]]><t t-esc="'true' if success else 'false'"/><![CDATA[;
+                    var status = "]]><t t-out="status"/><![CDATA[";
+                    var success = ]]><t t-out="'true' if success else 'false'"/><![CDATA[;
                     var payload = {
                         type: 'neatclover_vt_result',
                         status: status,

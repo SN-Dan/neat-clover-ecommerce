@@ -1,6 +1,6 @@
 {
     "name": "Payment Provider: Clover",
-    "version": "19.0.1.1.0",
+    "version": "20.0.1.1.0",
     "category": "Accounting/Payment Providers",
     "sequence": 350,
     "summary": "Clover E-Commerce/Online Payments Official Integration — checkout, payment links, virtual terminal & refunds.",
@@ -21,7 +21,7 @@
     "images": ["static/description/main.gif"],
     "data": [
         "security/neatclover_security.xml",
-        "security/ir.model.access.csv",
+        "security/ir.access.csv",
         "views/payment_provider_views.xml",
         "views/payment_neatclover_templates.xml",
         "data/payment_provider_data.xml",

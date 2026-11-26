@@ -16,7 +16,7 @@ class CloverLinkPopup(models.TransientModel):
         'payment.provider',
         string='Payment Provider',
         required=True,
-        domain="[('code', '=', 'neatclover'), ('state', '!=', 'disabled')]",
+        domain="[('code', '=', 'neatclover'), ('active', '=', True)]",
     )
     reference = fields.Char(string='Reference', readonly=True)
     payment_link = fields.Char(string='Payment Link', readonly=True)
@@ -29,7 +29,7 @@ class CloverLinkPopup(models.TransientModel):
         }
         payload_json = json.dumps(payload_data, separators=(',', ':')).encode()
         encoded_payload = base64.urlsafe_b64encode(payload_json).decode().rstrip('=')
-        secret = (self.env['ir.config_parameter'].sudo().get_param('database.secret') or '').encode()
+        secret = (self.env['ir.config_parameter'].sudo().get_str('database.secret') or '').encode()
         signature = hmac.new(secret, encoded_payload.encode(), hashlib.sha256).hexdigest()
         return f'{encoded_payload}.{signature}'
 
@@ -74,7 +74,7 @@ class CloverLinkPopup(models.TransientModel):
 
         provider = provider or self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ], limit=1)
         if not provider or not provider.neatclover_connection_url:
             raise ValidationError('Clover provider connection URL is not configured.')
@@ -85,7 +85,7 @@ class CloverLinkPopup(models.TransientModel):
             link_rec._create_sale_orders_payment_transaction()
         payload = self._build_link_payload(link_rec)
         # base_url = provider.neatclover_connection_url.rstrip('/')
-        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url').rstrip('/')
+        base_url = self.env['ir.config_parameter'].sudo().get_str('web.base.url').rstrip('/')
         return {
             'provider_id': provider.id,
             'reference': link_rec.reference,
@@ -95,7 +95,7 @@ class CloverLinkPopup(models.TransientModel):
     @api.model
     def default_get(self, fields_list):
         vals = super().default_get(fields_list)
-        provider = self.env['payment.provider'].sudo().search([('code', '=', 'neatclover'), ('state', '!=', 'disabled')], limit=1)
+        provider = self.env['payment.provider'].sudo().search([('code', '=', 'neatclover'), ('active', '=', True)], limit=1)
         vals.update({'provider_id': provider.id})
         return vals
 

@@ -8,6 +8,7 @@ from urllib.parse import quote
 from odoo.http import request
 from odoo import _, http, fields
 from odoo.exceptions import ValidationError
+from odoo.sql_db import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
 
 
 _logger = logging.getLogger(__name__)
@@ -245,7 +246,18 @@ class NeatCloverController(http.Controller):
                     exec(exec_code, {}, local_context)
                     response = local_context.get("response") or {}
 
-                    tx._process('neatclover', response)
+                    try:
+                        tx.with_context(payment_safe_write=True)._process(response)
+                        if tx.state == 'done':
+                            tx._neat_try_post_process()
+                    except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                        raise
+            elif tx and tx.provider_id.code == 'neatclover' and not tx.is_post_processed:
+                # Webhook may have set done first; still need sale confirm/invoice.
+                try:
+                    tx._neat_try_post_process()
+                except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                    raise
             landing_route = '/payment/status'
             _logger.info("clover_result response redirect=%s", landing_route)
             return request.redirect(landing_route)
@@ -253,7 +265,7 @@ class NeatCloverController(http.Controller):
         return request.redirect('/payment/status')
 
     def _get_link_signing_secret(self):
-        return (request.env['ir.config_parameter'].sudo().get_param('database.secret') or '').encode()
+        return (request.env['ir.config_parameter'].sudo().get_str('database.secret') or '').encode()
 
     def _parse_link_payload(self, payload):
         try:
@@ -293,7 +305,7 @@ class NeatCloverController(http.Controller):
         if not provider:
             _logger.info(f"\n No Provider Found \n")
             provider = link_rec.provider_id.sudo()
-        if not provider or provider.code != 'neatclover' or provider.state == 'disabled':
+        if not provider or provider.code != 'neatclover' or not provider.active:
             return {'error': 'Clover provider is not configured.'}
 
         processing_values = link_rec.neatclover_get_processing_values(
@@ -625,7 +637,12 @@ class NeatCloverController(http.Controller):
                     _logger.info("neatclover_wh response: %s", response_body)
                     return request.make_json_response(response_body, status=200)
                 if tx.state not in ['done', 'error']:
-                    tx._process('neatclover', response)
+                    try:
+                        tx.with_context(payment_safe_write=True)._process(response)
+                        if result_state == 'done':
+                            tx._neat_try_post_process()
+                    except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                        raise
                     response_body = {
                         'error': 'OK',
                         'message': 'OK',
@@ -735,7 +752,7 @@ class NeatCloverController(http.Controller):
             return request.not_found()
         vt_providers = request.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ])
         _logger.info(
             "neatclovervt_invoice_payment_page response wizard_id=%s reference=%s provider_count=%s",
@@ -748,7 +765,7 @@ class NeatCloverController(http.Controller):
 
     def _neatclovervt_invoice_provider_for_wizard(self, wizard, provider_id):
         provider = request.env['payment.provider'].sudo().browse(int(provider_id)).exists()
-        if not provider or provider.code != 'neatclover' or provider.state == 'disabled':
+        if not provider or provider.code != 'neatclover' or not provider.active:
             return request.env['payment.provider']
         if not wizard.virtual_payment_id:
             return request.env['payment.provider']
@@ -810,7 +827,7 @@ class NeatCloverController(http.Controller):
             if link_rec.sale_order_ids:
                 tx = link_rec._get_sale_orders_payment_transaction()
                 if tx and tx.state == 'draft':
-                    tx.write({'amount': prepared_amount})
+                    tx.with_context(payment_safe_write=True).write({'amount': prepared_amount})
                 else:
                     link_rec._create_sale_orders_payment_transaction()
 

@@ -33,7 +33,7 @@ class NeatCloverUrlToken(models.AbstractModel):
 
     @api.model
     def _database_secret(self):
-        return (self.env['ir.config_parameter'].sudo().get_param('database.secret') or '').encode()
+        return (self.env['ir.config_parameter'].sudo().get_str('database.secret') or '').encode()
 
     @api.model
     def _aes_key(self):

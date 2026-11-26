@@ -18,13 +18,13 @@
                 <field
                         name="neatclover_reset_code"
                         string="Update Module Cache"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <field
                         name="neatclover_activation_code"
                         string="Activation Code"
                         password="True"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <field
                         name="neatclover_store_id"
@@ -33,28 +33,28 @@
                     <field
                         name="neatclover_public_key"
                         string="Clover Public Key"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <field
                         name="neatclover_private_key"
                         string="Clover Private Key"
                         password="True"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <!-- <field
                         name="neatclover_use_iframe"
                         string="Use iFrame"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     /> -->
                     <field
                         name="neatclover_connection_url"
                         string="Odoo Server URL"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <field
                         name="neatclover_fallback_user_id"
                         string="Fallback Failure User"
-                        required="code == 'neatclover' and state != 'disabled'"
+                        required="code == 'neatclover' and active"
                     />
                     <div class="alert alert-success" role="alert" colspan="2">
                         <b>By using this module you agree to our </b>

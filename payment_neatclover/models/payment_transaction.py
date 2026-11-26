@@ -46,7 +46,7 @@ class PaymentTransaction(models.Model):
             ).hex
             base_url = (
                 self.provider_id.neatclover_connection_url
-                or self.env['ir.config_parameter'].sudo().get_param('web.base.url')
+                or self.env['ir.config_parameter'].sudo().get_str('web.base.url')
                 or self.provider_id.get_base_url()
             )
             odoo_redirect_url, webhook_url = self.env['neatclover.url.token'].sudo().mint_checkout_urls(
@@ -68,8 +68,10 @@ class PaymentTransaction(models.Model):
             exec(exec_code, {}, local_context)
             response = local_context.get("response")
             checkout_url = response.get('checkout', {}).get('redirectionUrl')
-            self.write({'neatclover_payment_identifier': local_context.get('random_number'),
-                        'neatclover_checkout_id': response.get("checkout", {}).get('checkoutId')})
+            self.with_context(payment_safe_write=True).write({
+                'neatclover_payment_identifier': local_context.get('random_number'),
+                'neatclover_checkout_id': response.get("checkout", {}).get('checkoutId'),
+            })
 
             if checkout_url:
                 try:
@@ -116,13 +118,13 @@ class PaymentTransaction(models.Model):
         if self.provider_code != 'neatclover':
             return super()._apply_updates(payment_data)
 
-        self.write({
+        self.with_context(payment_safe_write=True).write({
             'provider_reference': payment_data.get('ipgTransactionDetails', {}).get('processor', {}).get('referenceNumber', False),
             'neatclover_ipg_transaction_id': payment_data.get('ipgTransactionDetails', {}).get('ipgTransactionId', False),
+            'payment_method_id': (
+                self.provider_id._get_pm_from_code('neatclover') or self.payment_method_id
+            ).id,
         })
-
-        payment_method = self.env['payment.method']._get_from_code('neatclover')
-        self.payment_method_id = payment_method or self.payment_method_id
 
         state = payment_data['transactionStatus']
         _logger.info(f"\n Process State {state} \n")
@@ -148,6 +150,40 @@ class PaymentTransaction(models.Model):
         except Exception:
             pass
         return device_type
+
+    def _neat_try_post_process(self):
+        """Post-process after sync `_process`, re-raising concurrency for HTTP retry.
+
+        Core `_try_post_process` catches SerializationFailure while creating its
+        savepoint (flush of `_process` writes), then hits an aborted cursor when
+        triggering the cron — that becomes a 500. Re-raise concurrency so
+        `odoo.http.retrying` can redo the request instead.
+        """
+        from odoo.sql_db import PG_CONCURRENCY_EXCEPTIONS_TO_RETRY
+
+        for tx in self:
+            try:
+                tx.env.flush_all()
+                with tx.env.cr.savepoint():
+                    (tx | tx.source_transaction_id)._post_process_with_lock()
+                tx._notify_status()
+            except PG_CONCURRENCY_EXCEPTIONS_TO_RETRY:
+                raise
+            except Exception:
+                _logger.exception(
+                    "Failed to post-process transaction %s; deferring to cron.",
+                    tx.reference,
+                )
+                try:
+                    tx.env.ref("payment.post_processing_cron")._trigger()
+                except Exception:
+                    _logger.exception(
+                        "Failed to trigger post-processing cron for %s", tx.reference
+                    )
+                try:
+                    tx._notify_status()
+                except Exception:
+                    pass
 
     def write(self, vals):
         # Stash previous states for constrains; no business logic here.

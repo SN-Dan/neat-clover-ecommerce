@@ -180,9 +180,9 @@ class NeatCloverFinalisePayment(models.Model):
                 _logger.info(
                     'NeatClover finalise cron provider id=%s state=%s',
                     provider.id if provider else None,
-                    provider.state if provider else None,
+                    ('live' if provider.is_live else 'test') if provider and provider.active else ('disabled' if provider else None),
                 )
-                if not provider or provider.state == 'disabled':
+                if not provider or not provider.active:
                     continue
 
                 # All pending rows for this provider; aggregate only for API payload shape.
@@ -209,7 +209,7 @@ class NeatCloverFinalisePayment(models.Model):
                     if not currency or amount is None:
                         continue
                     payloads.append({
-                        'developerMode': provider.state != 'enabled',
+                        'developerMode': not provider.is_live,
                         'deviceType': device_type or 'ecommerce',
                         'amount': float(amount),
                         'currency': currency.name,

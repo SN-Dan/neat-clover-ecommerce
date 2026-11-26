@@ -81,7 +81,7 @@ class CloverVTPopup(models.TransientModel):
 
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ], limit=1)
         if not provider:
             raise ValidationError(_('Clover virtual terminal provider is not configured.'))
@@ -118,7 +118,7 @@ class CloverVTPopup(models.TransientModel):
 
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ], limit=1)
         if not provider:
             raise ValidationError(_('Clover virtual terminal provider is not configured.'))
@@ -146,7 +146,7 @@ class CloverVTPopup(models.TransientModel):
 
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ], limit=1)
         if not provider:
             raise ValidationError(_('Clover virtual terminal provider is not configured.'))
@@ -173,7 +173,7 @@ class CloverVTPopup(models.TransientModel):
             raise ValidationError(_('Please select exactly one sales order.'))
         provider = self.env['payment.provider'].sudo().search([
             ('code', '=', 'neatclover'),
-            ('state', '!=', 'disabled'),
+            ('active', '=', True),
         ], limit=1)
         if not provider:
             raise ValidationError(_('Clover virtual terminal provider is not configured.'))

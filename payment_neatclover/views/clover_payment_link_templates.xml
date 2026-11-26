@@ -6,7 +6,7 @@
                 <h2>Payment</h2>
                 <div class="mb-2">
                     <strong>Reference:</strong>
-                    <span t-esc="reference"/>
+                    <span t-out="reference"/>
                 </div>
                 <t t-if="link_status == 'paid' or link_is_paid">
                     <div class="alert alert-success" role="alert">
@@ -35,7 +35,7 @@
                 </t>
                 <t t-if="payment_error">
                     <div class="alert alert-danger" role="alert">
-                        <t t-esc="payment_error"/>
+                        <t t-out="payment_error"/>
                     </div>
                 </t>
 
@@ -47,11 +47,11 @@
                                 <t t-foreach="order_pay_lines" t-as="line">
                                     <li class="d-flex justify-content-between align-items-center border-bottom py-2">
                                         <a t-att-href="line.get('portal_url')" target="_blank" rel="noopener noreferrer">
-                                            <t t-esc="line.get('name')"/>
+                                            <t t-out="line.get('name')"/>
                                         </a>
                                         <span>
-                                            <t t-esc="currency_symbol"/>
-                                            <t t-esc="'%.2f' % line.get('amount')"/>
+                                            <t t-out="currency_symbol"/>
+                                            <t t-out="'%.2f' % line.get('amount')"/>
                                         </span>
                                     </li>
                                 </t>
@@ -63,11 +63,11 @@
                                 <t t-foreach="invoices" t-as="invoice">
                                     <li class="d-flex justify-content-between align-items-center border-bottom py-2">
                                         <a t-att-href="invoice.get_portal_url() or ('/web#id=%s&amp;model=account.move&amp;view_type=form' % invoice.id)" target="_blank" rel="noopener noreferrer">
-                                            <t t-esc="invoice.name or invoice.ref or ('INV-%s' % invoice.id)"/>
+                                            <t t-out="invoice.name or invoice.ref or ('INV-%s' % invoice.id)"/>
                                         </a>
                                         <span>
-                                            <t t-esc="invoice.currency_id.symbol or ''"/>
-                                            <t t-esc="'%.2f' % invoice.amount_total"/>
+                                            <t t-out="invoice.currency_id.symbol or ''"/>
+                                            <t t-out="'%.2f' % invoice.amount_total"/>
                                         </span>
                                     </li>
                                 </t>
@@ -75,8 +75,8 @@
                         </t>
                         <div class="fw-bold">
                             Total:
-                            <t t-esc="currency_symbol"/>
-                            <t t-esc="'%.2f' % amount_total"/>
+                            <t t-out="currency_symbol"/>
+                            <t t-out="'%.2f' % amount_total"/>
                         </div>
                     </div>
                 </div>

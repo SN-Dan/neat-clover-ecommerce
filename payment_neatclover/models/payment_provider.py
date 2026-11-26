@@ -218,7 +218,7 @@ class PaymentProvider(models.Model):
     def neatclover_get_base_url(self):
         """Fiserv REST API host used for checkout creation and payment requests."""
         base_url = "https://prod.emea.api.fiservapps.com"
-        if self.state == "test":
+        if not self.is_live:
             base_url += "/sandbox"
         return base_url
 

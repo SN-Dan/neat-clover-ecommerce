@@ -1,0 +1,7 @@
+id,name,model_id,group_id/id,operation,domain
+access_clover_link_popup_user,access.clover.link.popup.user,clover.link.popup,base.group_user,crud,
+access_clover_payment_link_user,access.clover.payment.link.user,clover.payment.link,base.group_user,crud,
+access_clover_refund_user,access.clover.refund.user,clover.refund,base.group_user,crud,
+access_clover_refund_popup_user,access.clover.refund.popup.user,clover.refund.popup,base.group_user,crud,
+access_clover_vt_popup,access_clover_vt_popup,clover.vt.popup,base.group_user,crud,
+access_neatclover_finalise_payment_user,access.neatclover.finalise.payment.user,neatclover.finalise.payment,base.group_user,crud,
